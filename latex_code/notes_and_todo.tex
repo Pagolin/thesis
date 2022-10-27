@@ -1,0 +1,134 @@
+\documentclass{scrartcl}
+\usepackage{amsmath}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{color}
+\usepackage{todonotes}
+\usepackage{pdfpages}
+\usepackage{subcaption}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+\lstset{style=mystyle}
+\newcommand{\means}{$\rightarrow{}$}
+
+\begin{document}
+
+
+\section{ToDos}
+\begin{itemize}
+    \item describe Ohua
+    \item describe the actual problem
+    \item are there other compilation approaches 
+    \begin{enumerate}
+        \item from any monolithic something to microkernel 
+        \item from imperative lang to message passing 
+        \item from dependent code to separation of concerns
+    \end{enumerate}
+    \item Linear State Usage/Transformation \means Do literature search!
+    \item motivation: use notes\_motivation.md
+\end{itemize}
+
+\section{Notes on Papers -- 'Warehouse for Writing'}
+\subsection{Unikernels}
+\textbf{Unikernels: The Rise of the Virtual Library Operating System}
+\begin{itemize}
+    \item call 'operating systems virtualization' (Xen, VMWare) the key enabler of cloud computing
+    \item downside: yet another layer on the software stack (e.g support for old physical protocols; irrelevant optimizations; backward-compatible interfaces (for example, Posix); user-space processes and threads (in addition to VMs on a hypervisor); and managed-code run-times (for example, OCaml, .NET, or Java). )
+    \item Solution/Approach: MirageOS \means Compile single-purpose appliances 
+    \begin{itemize}
+        \item in style of a library operating system
+        \item all code (HW interfacing, Hypervisor, OS kernel, user process, threads, language run-time, application code, configs) in the same language framework \means compiled to contain only necessary parts
+        \item improves performance, reduces attack surface
+    \end{itemize}
+    \item hypervisors: horizontal scaling \means more cores/memory for a VM, vertical scaling \means more VMs
+    \item external load balancers needed to spawn new VMs on load spikes, 
+    \item 'traditional  OSes' 
+    \begin{itemize}
+        \item are not optimized for boot time and size (Windows system updates on boot \means you better keep booted idle machines for sudden spikes)
+        \item are general purpose and have to handle diverse resources themselves 
+        \item[]\means this is not the case for server appliances, where the hypervisor cares for resources and the requirements are 'single purpose application'
+    \end{itemize}
+    \item Problem: Existing Software relies on OS/System interfaces (POSIX, file system, network stack) to be present 
+    \item \textbf{Library Operating Systems}:
+    \begin{itemize}
+        \item first were Exokernel and Nemesis10 in the late 1990s
+        \item OS functions are implemented as libraries, protection boundaries are 'moved to the lowest hardware layers' \todo[inline]{clarify what that exactly means},
+        \item policies implement access rights for applications using those libraries
+        \item[]\means improves (predictability of) performance as applications access the HW resources directly i.e. not kernel-user-space switching 
+        \item downsides: 1. running multiple applications side-by-side is tricky as resource access needs to be isolated, 2. device drivers need to be rewritten \means infeasible with fast evolving commodity hardware    
+    \end{itemize}
+    \item[] \means luckily these downsides \textbf{do not exists when hardware is abstracted by a hypervisor} i.e. for VMs
+    \item \textbf{Typing, Memory Management, Modulization}: (re)writing kernels in high-level languages (other than C) provides the chance to avoid memory management, pointer and overflow bugs by language design (e.g. through strongly typed languages, static type checking, automatic memory management,  bounds checking, ...), for instance in ML (and we've just seen in Haskell) typing can also be used to enforce capability style access control \means even for the whole system if it's all based on one language run-time, further module systems i.e. support for encapsulation, separation of concerns 
+    \item[]\means\textbf{Metaprogramming}: details of deployment/run-time system can be included in the code for static analysis and optimization via the compiler
+    
+    
+    \item \textbf{MirageOS}: 
+    \begin{itemize}
+        \item based on OCaml, emits unikernels that run on Xen hypervisor
+        \item compiler sees all dependencies including kernel libs as source code
+        \item SAT solver is used to track module compatibility between user code and kernel libraries
+        \item emitted code is a single-purpose Library Operating System VM (even bootloader is just a linked library), VM relies on hypervisor
+        \item OCaml is used because a) static, strong typing b) supports functional, imperative and object oriented prgrmg and c) has a single-threaded run-time
+        \item OCamls module system also features \textbf{parameterized module structures}, i.e. similar to header files in C but allowing type parameters \means provide module functors
+        \item SAT solve approach allows \textbf{gradual recompilation} i.e. programmer can gradually replace kernel function by libraries, SAT solver will check, what is still needed from the monolithic kernel
+        \item further backends \textbf{FreeBSD kernel module back end, JavaScript target by using the js\_of\_ocaml compiler}
+        \item MirageOS libraries provide \textbf{serializable, explicite state handles}, \textbf{tree structured configuration is used to generate (metaprogramming) structure of the final appliance and initial state of the libraries }, similarly metaprogramming is used to generate a 'file system module' serving the needs of user code that only uses some files
+        \item[]metaprogramming \means parts of the 'generating code' are not present in the 'generated code' \means compiled appliances can not just be repurposed without relinking or recompliation.
+        \item ''In MirageOS, the OCaml compiler receives the source code for an entire kernel’s worth of code and links it into a stand-alone native-code object file. It is linked against a minimal runtime that provides boot support and the garbage collector. There is no preemptive threading, and the kernel is event driven via an I/O loop that polls Xen devices.''
+        \todo[inline]{I don't fully get the life cycle description i.e. normal applications \means compiled to binaries \means be loaded into an OS process to run \means check configuration to tailor itself to the environment, many programs will use the same binary but with different config files}
+    \end{itemize}
+    \item \textbf{HalVM} similar to MirageOS, but in Haskell
+    \item \textbf{ Drawbridge project } converts Windows into a libOS 
+    \todo[inline]{Check out how Drawbridge does this? Might be a hint for our necessary code restructuring}    
+\end{itemize}
+
+
+\section{Open Questions}
+\section{Thoughts and Ideas}
+Use in general explanation and reasoning
+\begin{itemize}
+    \item domain knowledge of the programmer is expressed by choosing the scope and explicitly composing things she wants to be components later
+    \item also actually the software already has to be written in message-passing style at least as long as we don't implement conversion of function calls to message formats
+    
+\end{itemize}
+\begin{itemize}
+    \item Do benchmarks give us a hint how startup of unikernels performs compared to VMs and FaaS functions ?
+    \item Do we need a similar approach as in MirageOS where libraries are linked to the application by initializing their (serializable) state handle?
+    \item How does the level of separation of concerns in unikernel relate to our microkernel target? 
+    \begin{itemize}
+        \item '' rather than treating the database, Web server, and so on, as independent applications that must be connected by configuration files, they are treated as libraries within a single application,'' \means the idea of compiling a composition in the host language is pretty similar
+        \item libraries have their own state \means this looks like basically connecting stateful functions
+        \item both argument via a) static type checking b) simple composition c) eliminating config files
+        \item not sure what they mean by 'flipping the switch' but they point out the ability to build and test as usual Unix applications and then 'flip the switch' and deploy as single purpose VMs 
+        \item when they talk about \textit{single-purpose} they seem to talk about one application with all required code e.g. network stack, db stuff  to run it \means we talk about separating this further, horizontally i.e. separate  NIC interface from TCP/IP from Application  so unikernel \means microkernel 
+        \item They talk about pressure imposed on the hypervisor. How does this work out for us? Who manages processes (and VMs) at what level of separation?
+    \end{itemize}
+    \item Related/terms: WPO (Whole Program Optimizer, 'pioneer' MLton) \means in case of libOSes 'whole program' includes the OS
+    \item How does security of container, the unikernel/libOS approach and the microkernel approacch relate?...And why?
+    \item Related Work ? : Generating Packet parsing Code and integrating it with smolTCP \cite{GenerateCode}
+    \item Designing Systems: One argument for microkernels Carsten mentions (and actually it really follows from the principle) is, that they enforce compartmentalization i.e. make the programmers structure their application from independent components and have only explicit communication relations (no sharing things). How do we think about this argument in our approach. Clearly, composition is the way to structure things in our approach, but do we enforce the same strictness of isolation and more over ...
+    \item What if libraries (i.e. code we don't look at) entail function calls and shared data among later separated components?
+\end{itemize}
+\end{document}

@@ -1,0 +1,73 @@
+\documentclass[diplominf, bibnum, lof, lot]{zihpub}
+
+\usepackage{color}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{listings-rust}
+\usepackage{minted}
+\usepackage{multirow}
+\usepackage{pdfpages}
+\usepackage{pbox}
+\usepackage{subcaption}
+\usepackage{todonotes}
+
+% Just for convenience
+\newcommand{\question}[1]{\todo[inline, color=blue!40]{#1}}
+\newcommand{\note}[1]{\todo[inline, color=yellow!40]{#1}}
+%\newcommand{\style}[1]{\todo[inline, color=!40]{#1}}
+\newcommand{\means}{$\rightarrow{}$}
+\newcommand{\code}[1]{\textcolor{gray}{$\mathsf{#1}$}}
+\newcommand{\rust}[1]{\mintinline{rust}{#1}}
+
+\author{Lisza Zeidler}
+\title{Bricks of a Network Stack}
+\matno{4545705}
+\betreuer{}
+
+\bibfiles{literature.bib}
+\abstracten{
+\begin{itemize}
+    \item Complexity is exploding \means system get seemingly indeterministic, insecure, hard to maintain and impossible to improve (in a non-destructive manner)
+    \item So trend for compartmentalization/separation of concerns in virtually every section of computer science \means in particular also in OS/Kernel Development
+    \item \means Microkernels \means need to adapt monolithic software with tightly interconnected responsibilities to separation of concerns, message passing architecture with independent components
+    \item we use part of an OS, the network stack to demonstrate, how this adaptation can be achieved in an automatic way using idiomatic programming and with deterministic result 
+\end{itemize}
+
+}
+\copyrighterklaerung{..some copyright stuff}
+
+\acknowledgments{So long and thanks for all the fish...}
+
+\begin{document}
+
+\chapter{Introduction}
+\label{Chapter:Intro}
+\input{chapters/introduction}
+
+\chapter{Background}
+\label{Chapter:Background}
+\input{chapters/background}
+
+\chapter{Implementation}
+\label{Chapter:Implementation}
+\input{chapters/implementation}
+
+\chapter{Benchmarks}
+\label{Chapter:Benchmarks}
+\input{chapters/benchmarks}
+
+\chapter{Related Work}
+\label{Chapter:Related}
+\input{chapters/relatedwork}
+
+
+\chapter{Conclusion}
+\label{Chapter:Discussion}
+\input{chapters/conclusion}
+
+\appendix
+\chapter{Appendix}
+\label{Appendix}
+\input{chapters/appendix}
+\end{document}
