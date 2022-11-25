@@ -67,3 +67,11 @@ Actual Problem description
         \item Do we need to build in a shut down mechanism? 
         \item Can/Should the Compiler be able to detect system interaction and tailor them?        
     \end{itemize}
+    
+    
+    \todo[inline]{Important Point I don't know where to put yet and also needs elaboration:}
+    \note{The transformation we will extract from the rewriting process are to some degree actually extensions of Ohua programming model. The model currently already enforces 1) variables to be either used as state, or as variable i.e.\means no sending of states and 2) states from outside the loop scope to be only used once inside loop or recursion \means linearity inside loops. What is not enforced currently is, that states in general are used only once, i.e. outside loops or when created inside loops states can be used more than once \means so no linearity here.}
+
+    
+\todo[inline]{Example Rust 4 Unikernel \cite{Rust4Unikernel}}
+\todo[inline]{Formal Verification eg for L4 derivatives as motivation \cite{sL4Verf}}

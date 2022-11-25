@@ -69,11 +69,11 @@
   - [ ] distributed Rust
   - [ ] maybe automated distributing C++?/rust? anything?
 - [ ] Implementierung beschreiben
-  - [ ] Alle Umformungen des Codes zwecks Compilerung
-  - [ ] Rust Features die nicht funktionieren, warum/wie gelöst
-  - [ ] Ohua Anspassungen (Type Extraction, Type Propagation, SSA?)
-  - [ ] Implementierung 'unikernel Version ddes Stores'
-  - [ ] "Patterns" in der Umformung -> gibt es Dinge die automatisierbar sind
+  - [ ] discribe Implementation 'unikernel Version of Store appl.' 
+  - [ ] discribe rewrites to structually fit programmign model/ fit Local States 
+  - [ ] describe rewrites to handle unsupported Rust features
+  - [ ] describe Ohua fixed/adaptations (Type Extraction, Type Propagation, SSA?)
+  - [ ] describe "transformations/Patterns" we can abstract from rewrites -> can we automatise?
 - [ ] Intro 
   - [ ] Setting -> Was ist der eigentliche Fokus hier? -> Verteilte Systeme einfacher bauen/verifizieren? -> Security einfacher bauen/verifizieren? Flexibilität?
   - [ ] Was ist das Problem

@@ -502,26 +502,23 @@
 \RequirePackage{fancyhdr}
 
 % Automatische Generierung des Dokumentgrundgeruests
-	\let\@altdoc=\document
-	\let\end@altdoc=\enddocument
-	\renewenvironment{document}{%
-	\begin{@altdoc}%
-	%\thispagestyle{empty}
-	%\pagestyle{empty}
-	
+\let\altdoc=\document
+\let\endaltdoc=\enddocument
+ 
+\newenvironment{thesisdocument}{%
+    %\begin{document}%
 	\begin{titlepage}
 		 \thispagestyle{empty}
 
             \begin{tabular*}{160mm}[b]{p{160mm}@{\extracolsep\fill}}
           % TUD-Logo
-            \hspace*{-19mm}\includegraphics[height=16.73mm]{logos/TU_Logo_SW}%  width=57mm
-            \hfill\includegraphics[height=16.73mm]{logos/BI_Logo.pdf}%
+            \hspace*{-5mm}\includegraphics[height=16.73mm]{logos/TU_Logo_SW}%  width=57mm
+            \hfill\includegraphics[height=16mm]{logos/BI_Logo.pdf}%
             \\[3.75mm]
             \hline%
         \end{tabular*}\hspace{-160mm}%
 
 	\hrule
-
 
 	\begingroup\centering
 	\vspace{1cm}
@@ -672,7 +669,9 @@
 	      \fancyhead[L]{\leftmark}
 	    \fi
 	  \fi
-	\fi}{%
+	\fi} 
+    %Document goes here
+    {%
 	% Literatur-, Abbildungs- und Tabellenverzeichnis, wenn nicht schon bei
 	% \appendix automatisch davor eingefuegt
 	\ifx\@empty\@haveapp
@@ -718,7 +717,8 @@
 	  \copyrightinfo
 	\fi
 	\cleardoublestandardpage
-	\end{@altdoc}}
+	%\end{document}
+ }
 
 
 

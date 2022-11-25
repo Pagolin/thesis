@@ -1,4 +1,5 @@
 \section{Adaptations to make sequential smoltcp amenable to 'distribution'}
+\label{sec:ImplSmoltcp}
 \note{I might mention:
 While this work was being conducted, smoltcp was being further developed. In particular, the device became an independent component. This logically moves the structure of the library in the direction we are aiming for. 
 Therefore, we decided to use this new state of smoltcp as a further basis for the work and to adapt the previous changes accordingly. 
@@ -348,6 +349,8 @@ M\"oglichkeiten:
 \end{itemize}
 
 
+
+
 \textbf{Steps for App-Interface:}
 1. The most complex interaction (if not the only one) we need to tackle is the one between the app and the tcp\_ip\_stack. In the new smoltcp implementation, the sockets are a separate entity although they are logically a part of the tcp\_ip\_stack obviously. The app needs to be able to set up and identify sockets to manage connections, map requests and answers and so on. The interface needs the sockets to process incoming and outgoing packets based on their internal state.   
 
@@ -450,7 +453,7 @@ The main change, required to implement this solution was threading a monadic con
 
 The conversion of algorithms is also monadic process and the initial context contains the names and types extracted from the global scope. For each algorithm the parameter names and their types are parsed from the signature and added to the context. Upon parsing the body of the algorithm each right hand side of a let binding\footnote{We currently only support variable or tuple patterns} is checked for type annotation and registered in the local context if annotated properly. Unannotated bindings will yield an error at this point. AS shown in the example in Figure~\ref{fig:TypeExtractionExample} this might require some additional local assignments, when local variables result from pattern binding.\\
 
-Now, whenever a function call is converted, the function type is derived from its arguments. In the case of a stateful call, this also includes the called object. If the arguments are variables, the types are obtained from the context. If the variables are not in the context, again an error is thrown. For supported literal arguments (currently integers, booleans and strings) the types are derived automatically. Obviously, this limits the accepted input syntax in that only literals and variables are valid as direct function arguments. Still the advantage of being able to use the entire Rust syntax again in the imported libraries outweighs this in our opinion. As function types now depend on the types of local variables we added test cases to the regression test suite to ensure proper typing, when local scope variables shadow names from outer scopes. Notably name shadowing inside the same scope is currently not supported by Ohuas renaming algorithm and could therefore not be tested.\\
+Now, whenever a function call is converted, the function type is derived from its arguments. In the case of a stateful call, this also includes the called object. If the arguments are variables, the types are obtained from the context. If the variables are not in the context, again an error is thrown. For supported literal arguments (currently integers, booleans and strings) the types are derived automatically. Obviously, this limits the accepted input syntax in that only literals and variables are valid as direct function arguments. Still the advantage of being able to use the entire Rust syntax again in the imported libraries outweighs this in our opinion. As function types now depend on the types of local variables we added test cases to the regression test suite to ensure proper typing, when local scope variables shadow names from outer scopes. Notably name shadowing is currently only supported for loop local scopes.  Ohuas renaming algorithm and could therefore not be tested.\\
 
 \todo[inline]{Check where the below comments belong}
 \note{Finally there are some open question we need to address regarding accepted types. Currently the type extraction mechanism just wraps any relevant type annotation from the input code in a to an internal argument type representation. This means, we do not distinguish the actual Rust types and do not filter for references, pointer or trait objects. The goal is of course to develop Ohua and the programming model for Rust to the point where a valid sequential input program never leads to an invalid output program, i.e. we want to achieve soundness. For this we need to evaluate if and how the type system of Rust has to be restricted in the input. And so we need to decide whether to leave this to the programmer, because it depends for example on the chosen backend or if there have to be additional mechanisms in the compiler to enforce these restrictions. We might also need to extend the programming model by necessary augmentation on the original program, like additional trait bounds. For example, an automatic annotation with \rust{[\#derive]} could be generated to add traits, e.g. for serialization, that were not necessary in the serial program. We will consider those question in the further development of Ohua and in particular the Rust integration.}
@@ -524,10 +527,56 @@ To fix this issue we have made two main changes. First, we have extracted the re
 One problem that has not been addressed in this work is that the control functions are not represented by separate constructors in the DFLang. This means that they can only be distinguished from normal Rust functions by their function name, which is error-prone and difficult to maintain. So in the future the control functions should at least be mapped in their own constructors. Also arguments with known type, like the first argument of the function \code{collect:: int -> A -> [A]} should optimally be enforced by the type system. 
 
 
-\todo[inline]{Describe SSA problem and fix as soon as tests work}
+\todo[inline]{Describe \textbf{SSA} problem and fix as soon as tests work}
+\todo[inline]{In case we do anything about the enforcement of the programming model, describe here. Maybe move the comment about adding tests hee also.}
+\subsection{Extending the supported Syntax}
+\todo[inline]{Not sure if this will remain/become s section. Maybe merge}
+\todo[inline]{would be cool if I got `while` transformation running}
+\textbf{Destructuring Tuples}: Destructuring of function output was limited to to flat tuples of two elements. As shown in the Example below, a function output consiting of more than two elements would have to be destructed in steps. This was obviously inconvenient, but more importantly, the added destruction step, as other function calls would have created a separate node in the derived DFG. This means that processes or threads were created for these unnecessary destructuring nodes, and the corresponding data was unnecessarily serialized and deserialized via these processes. In this smoltcp case study the problem is even more pronounced. Remember the goal is to not send the stateful components from one process to another at all. However the recursive loop of preparing, sending, receiving and processing data takes all three components as well as the data as arguments. So the limitation of destructuring would have required us to introduce destructuring steps in the input code and prevented state locality in the final graph. 
+\begin{figure}[H]
+\centering
+\tabskip=0pt
+\valign{#\cr
+    \hbox{%
+    \begin{subfigure}{.35\textwidth}
+    \centering
+     \begin{minted}[fontsize=\footnotesize]{rust}
+    let (x, y, z):(T1, T2, T3) = actual_function();
+     \end{minted}
+    \end{subfigure}%
+  }
+  \cr
+  \noalign{\hfill}
+    \hbox{%
+    \begin{subfigure}{.62\textwidth}
+    \centering
+    \begin{minted}[fontsize=\footnotesize]{rust}
+    let (x, yz):(T1, (T2, T3)) = actual_function();
+    let (y, z): (T2, T3) = invented_destruct(yz);
+    \end{minted}
+    \end{subfigure}%
+  }
+  \vfill
+  \cr
+}
+\caption{With destruction being limited to two elements, programmers needed workarounds as additional destruction steps to use function outputs of more that two variables}
+\label{fig:TypePropagationExample}
+\end{figure}
+
+Therefore we had to extend the support for tuples in three ways. 
+Firstly we made tuple destructuring representable in the backend language. In particular tuples where represented there as expressions \code{Tuple (e1, e2)}, where the expressions \code{e1} and \code{e2} where either literals or variables. Tuple indexing was implemented as dedicated expressions \code{First bnd} and \code{Second bnd}, where the binding \code{bnd} was the name of the indexed variable, e.g. \code{First "myList"} would be converted to \rust{myList[0]} in the Rust backend.\\
+
+Now we represent tuple expressions as lists of literals or variables \code{Tuple [Either Lit Var]} and indexing via the more general term \code{Indexing bnd num}, representing indexing of \code{bnd} at the natural number index \code{num}. \\
+
+\todo[inline]{Sebastians tuple type propagation fix. Was? Warum? Wie?}
+
+
+
 
 
 \subsection{Not yet supported Rust Features}
+
+\todo[inline]{Chekout Rust AST lowering in the rustc repo}
 \subsubsection{Error Handling} 
 There are different ways of handling errors in Rust that come with different difficulties for us. The actually troublesome cases are those who result in either a panic, or an early return. 
     \begin{enumerate}
@@ -569,8 +618,7 @@ $\Rightarrow$ To do this, we need to know the type of \rust{might_error}, becaus
 \bigskip
 
 \subsubsection{Match Expressions}
-Although it is slightly counter intuitive as Ohuas Frontend Language is functional and functional languages are notorious for pattern matching, there is no syntax for Rusts \code{match} expressions in Ohuas frontend language. So we either need to transform it into more basic constructs i.e. i-t-e, or encapsulate it in a library function\\
-
+Although it is slightly counter intuitive as Ohuas Frontend Language is functional and functional languages are notorious for pattern matching, there is no syntax for Rusts \code{match} expressions in Ohuas frontend language. So currently we either need to transform it into more basic constructs i.e. i-t-e, or encapsulate it in a library function. \\
 
 \begin{figure}[H]
 \centering
@@ -598,7 +646,8 @@ let x = match some_call() {
     \centering
     \begin{minted}[fontsize=\small]{rust}
  // replaced function code 
- let x = match_fun();
+ let (x, *variables used after match*)  = 
+    match_fun(*variables from scope used in the match*);
  //----------------
  // In a new separate library
  fn match_fun() {
@@ -621,10 +670,18 @@ let x = match some_call() {
 \caption{Match moved to a library function}
 \label{fig:MatchHandling}
 \end{figure}
+
+However this approach is not as trivial as it looks at first glance. It requires knowledge about the enclosed variables from the surrounding scope and encapsulation also changes the semantics of returning values or errors.. Branches returning by a no-semicolon statement need to be rewritten to use \rust{return}, branches with explicit \rust{return}, \rust{unwrap} or \rust{?} must lead to conditional returns in the outer/original scope of the match.\\
+
+ \todo[inline]{Instead we can see match expression as what they really are ... each pattern actually is a function from the matches value to bool, repeated matches are if match1 else if match2 else if .... So we can a) turn each match into a bool function(see below) and then transform the whole thing to nested if-else.}
+
+ 
+ \todo[inline]{Actually more efficient and also much cooler than nesting if else is supporting multi-case switch directly. by turning our 'branching-switches' from a ((0/1), (True/False)) system to a (num\_cases, num) semantic.  
+ This also happens basically when the rust compiler lowers either if-else or matches (see ref below). If we have an enumerated switch, the more efficent way to transfom the match is to have one match function, that return the index of the matched expression. We could encapsulate it in a library but due to import/visibility issues concerning the patterns it would actually be niver to have a way to encapsulate code 'in place' i.e. Ohua treads it as a function, but at least in the backend it's just inlined again.}
+\href{https://rustc-dev-guide.rust-lang.org/mir/construction.html#lowering-expressions-into-the-desired-mir}{rustc docu}
+
 \question{Can we rely on Rusts type inference here? i.e. 
 If, in the original code \code{x} did not have a type annotation, does this mean that the type of \code{match\_fun()}can also be derived?}
-$\Rightarrow$ It is at least not trivially possible to transform a match into an if-then-else because gates in ite are expressions not patterns.
-$\Rightarrow$ For some cases, although I'm not sure for how many it is possible to rewrite using if-let as: 
 
 \begin{figure}[H]
 \centering
@@ -634,9 +691,10 @@ $\Rightarrow$ For some cases, although I'm not sure for how many it is possible 
     \begin{subfigure}{.45\textwidth}
     \centering
      \begin{minted}[fontsize=\small]{rust}
-let x = match some_call() {
-    Some(y) => y
-    _ => default_thing
+let x = match some_call(arg) {
+    pattern1 => A,
+    pattern2 => B,
+    pattern3 => C
 } 
      \end{minted}
     \end{subfigure}%
@@ -647,19 +705,26 @@ let x = match some_call() {
     \begin{subfigure}{.45\textwidth}
     \centering
     \begin{minted}[fontsize=\small]{rust}
-let x;
-if let Some(y) = some_call() {
-    x = y
-} else {
-    x = default_thing
-}
+let wrapped_match = 
+    || match some_call(arg) {
+        pattern1 => 0,
+        pattern2 => 1,
+        pattern3 => 2
+    } 
+let index = wrapped_match;
+let mut x;
+if index=0 {
+    A
+} else if index = 1 {
+    B
+}...
     \end{minted}
     \end{subfigure}%
   }
   \vfill
   \cr
 }
-\caption{Rewrite match using if-let ?}
+\caption{Rewrite pattern matches to enumerated cases}
 \label{fig:MatchHandling2}
 \end{figure}
 \bigskip
@@ -674,7 +739,14 @@ Further notes:
 \end{itemize}
 
 \subsubsection{Structs and Impl Functions}
-\begin{itemize}
+Currently we do not compile \rust{impl} functions as algorithms. The question is, could we and in how far are they sematically different from 'pure algorithms'. From the outside, a method is one stateful operation on the objects it is called on. However the method it self is composed of stateful and stateless operations just like any other function. The only difference is the first argument, which is always the state itself in case of methods. 
+\note{The Rust borrow checker enforces linear state use in loops and is generally a good touchstone for the feasibility and effects of code transformations for Ohua. As seen in the transformation of smoltcp code, there is actually no difference in terms of memory access conflicts to the state, whether method code is encapsulated in the method or inlined in another algorithm. Also field visibility is not an issue as long as we only operate in a single scope.
+IFF this holds, what we would need to implement in Ohua is basically a replacement pass, that upon inlining a method, replaces the stateful calls to 'self' by the original object name.}
+
+
+\todo[inline]{Example using SSA and state threading replacement ... is this sufficient?}
+Further considerations:
+\begin{itemize}    
     \item Do we need serialization for all of them? How to do this in Rust?
     \item Do we need to preserve the original API in any scenario? If we rewrite structs to tuples for example, calling applications will crash.
 \end{itemize}
@@ -819,4 +891,11 @@ Patterns to describe:
     
 \end{enumerate}
 
+Considerations - not yet sorted or finished
+\begin{itemize}
+    \item Scope \means What is the compile scope? How do we 'bring methods/functions' into scope? Where would we e.g. generate wrapper functions? How do we handle visibility (public/private)? We don't want to enforce the Rust subset all over the library, so to pull things into scope we'd need to support full Rust and transform based on Rust AST \means wouldn't be general to all supported languages.
+    \item Early Returns \means What has to happen to inline Code with early returns?\means looks like it first becomes a nested 'if', but what's next?    
+\end{itemize}
 
+
+\todo[inline]{Describe link to original, closure based smoltcp architecture and implications for memory efficiency and heap-freeness}

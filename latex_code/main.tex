@@ -3,8 +3,6 @@
 \usepackage{color}
 \usepackage{float}
 \usepackage{hyperref}
-\usepackage{listings}
-\usepackage{listings-rust}
 \usepackage{minted}
 \usepackage{multirow}
 \usepackage{pdfpages}
@@ -40,10 +38,12 @@
 \acknowledgments{So long and thanks for all the fish...}
 
 \begin{document}
+\begin{thesisdocument}
 
-\chapter{Introduction}
-\label{Chapter:Intro}
-\input{chapters/introduction}
+\todo[inline]{replace figure environments with listing environments, adapt references and have a separate list for it. A how to is e.g. here: \url{https://latex-tutorial.com/code-listings/}}
+%\chapter{Introduction}
+%\label{Chapter:Intro}
+%\input{chapters/introduction}
 
 \chapter{Background}
 \label{Chapter:Background}
@@ -53,21 +53,22 @@
 \label{Chapter:Implementation}
 \input{chapters/implementation}
 
-\chapter{Benchmarks}
+%\chapter{Benchmarks}
 \label{Chapter:Benchmarks}
-\input{chapters/benchmarks}
+%\input{chapters/benchmarks}
 
-\chapter{Related Work}
-\label{Chapter:Related}
-\input{chapters/relatedwork}
+%\chapter{Related Work}
+%\label{Chapter:Related}
+%\input{chapters/relatedwork}
 
 
-\chapter{Conclusion}
+%\chapter{Conclusion}
 \label{Chapter:Discussion}
-\input{chapters/conclusion}
+%\input{chapters/conclusion}
 
 \appendix
 \chapter{Appendix}
 \label{Appendix}
 \input{chapters/appendix}
+\end{thesisdocument}
 \end{document}
