@@ -1,18 +1,17 @@
 \section{Flexible OS approaches}
+\label{sec:FlexibleOSes}
+The problem of overcoming disadvantages and potentially combining advantages of microkernel-based operating systems and unikernels has been addressed before. For unikernels disadvantages were a lack of isolation among components and the necessity to adapt to the component the library OS provides. Microkernels on the other hand provide strong isolation but only at the cost of significant overhead for IPC calls and again the necessity to adapt the existing code not to provided components but to communication primitives provided by the kernel. To avoid unnecessary overhead, programmers may also need to refactor the general structure of their code to minimize inter process communication. \\
 
-CubicleOS~\cite{sartakov2021cubicleos}:
-\begin{itemize}
-    \item[]Identified Problem: 
-    \item Library OSes and in particular the unikernels build form them are cool, but lack isolation among components after the kernels are compiled
-    \item Microkernel based OSes on the other hand provide strong isolation piping everything through IPC calls. This means programmers have to tailor their component APIs to the communication mechanism of the respective microkernel. This also entails minimizing interaction as the frequent context switches degrade performance and that calls and transmitted data have to be adapted (e.g. any data passed to a cross service invocation has to be serializable). 
-    \item The authors argue, that library OSes impose a particular burden on developers because they require adaptation of every third party component used. \means \textbf{This is a point for us. However, again ...we do not compile everything, but just the composition layer. So how do we make sure, that below this layer there is no interaction with the system that is written in traditional/monolith way and will not work on M$^3$?}
-    \item implemented based on Unikraft library OS
-    \item[] What is it?
-    \item Cubicle consists of 1) a build tool 2) a trusted binary loader (for the user space Unikraft binaries?) 3) a trusted run-time using Intel MPK and Cublicles custom isolation-communication abstractions 4) an extension to MPK to verify control flow integrity
-    \item[] How does it work? :
-    \item Core abstractions are: \textit{cubicles}\means isolation for components (not sure if this would be nodes in our graph), \textit{windows}\means opening a \textit{window} with a data structure makes the data available for other cubicles without copying \question{How is sharing implemented?} after usage the \textit{window} is explicitly closed again  \question{What if it's not closed ... by accident?!} and \textit{ cross-cubicle calls} are an abstraction obviously for function calls designed to preserve control flow integrity and interface integrity (i.e. only 'public functions are public')
-    \item The developer basically uses the windows in his code as shown in Figure ... taken from the original publication 
-\end{itemize}
+One example approach is CubicleOS~\cite{sartakov2021cubicleos}. It provides three main, new abstractions to overcome the problems of the isolation vs. overhead tradeoff. Those abstractions are 
+\begin{enumerate}
+    \item \emph{cublicles} used to define memory-isolated processes (components)
+    \item \emph{windows} used to define temporary memory sharing among trusted components, and
+    \item \emph{cross-cubicle calls} used to implement control flow integrity among \emph{cubicles}
+\end{enumerate}
+Memory isolation is implemented using Intel's Memory Protection Keys (MPK)\cite{intel64and}. A mechanism implemented in the ISA, that manages access rights to virtual page tables based on keys assigned to processes. The current implementation of CubicleOS is based on the Unikraft library OS\cite{kuenzer2021unikraft}. The programmer has to specify the components, that should become \emph{cubicles}. During the build process, function call among \emph{cubicles} are identified. To enforce isolation the build system of CubicleOS generates enveloping functions for those calls. These enveloping functions 
+called \emph{cross-cubicle calls} implement the context switch between \emph{cubicles} at runtime. Applications using CubicleOS can run on standard Linux. To enforce memory isolation, CubicleOS comes with two runtime components one loading the components with according memory rights, one managing memory access rights. \\
+The main adaptations the programmer is required to make are a) using Unikraft components b) defining the \emph{cubicles} and c) defining exceptions from the memory isolation. Exceptions are needed to improve performance and lower the overhead of context switches, when isolation is not desired. Those exception cases are either whole \emph{cubicles} or just data structures shared for particular calls among components. \emph{Cubicles} that are used frequently and are trusted can be declared 'shared' meaning  that there will be no context switches upon calls to any of their functions or usage of static constants. Data structures can be shared using CubicleOSs API for \emph{window}s, which enables the programmer to specify memory locations and sizes and the coded sections for which they should be shared. An example of this API is shown in Figure~\ref{fig:CubicleAPI}, adapted from the original publication.
+
 \begin{figure}[H]
     %\centering
     \begin{subfigure}[b]{0.45\textwidth}
@@ -31,18 +30,19 @@ CubicleOS~\cite{sartakov2021cubicleos}:
     \label{fig:CubicleAPI}
     \end{figure}
 
-FlexOS~\cite{lefeuvre2021flexos} 
+The aim of FlexOS~\cite{lefeuvre2021flexos} is to provide an easy way to exchange isolation primitives for existing code without (extensive) rewrites. Like CubicleOS it is based on an adapted version of the Unikraft library system. The two main primitives the FlexOS API provides are \emph{abstract gates} and \emph{abstract shared data}. In order to compile code with FlexOS, the programmer must replace all function calls between components with \emph{abstract gate} definitions and all shared memory areas with \emph{abstract shared data} definitions. These adjustments have also been made in the adapted system libraries. In addition the FlexOS build system needs a configuration file, which defines among other things the isolation mechanism and the division of the components. During compilation, the abstract definitions are replaced by concrete mechanisms of the target memory isolation techniques, which are MPK, Software Guard Extensions (Intel SGX) and Extended Page Tables \cite{intel64and}. 
+
+\textbf{Comparison}
 \begin{itemize}
-    \item FlexOS is build on the ideas of library operating systems, in particular on the idea that 'everything is a library'. 
-    \item This includes (micro)kernel components the system uses. 
-    \item It is based on the Unikraft~\cite{kuenzer2021unikraft} library OS.
-    \item FlexOS consists of a toolchain, a set of adapted libraries for all kinds of system/kernel functions (boot, networking, device drivers, memory access) and applications (e.g. nginx, redis, sqlite ...) and a set of supported 'Isolation Backends'. 
-    \item Users provide the code for their application and a configuration specifying the libraries and backend to use and FlexOs will produce a custom, single-address space, single purpose OS for the compiled appliance.
-    \item We do two things at the same time i) We isolate parts of the code from each other by extracting independent process steps from the composition code (build a DFG) and ii) We introduce backend specific communication mechanisms among the separated components. 
-    \item FlexOS does only of this. 
-    \item In particular, in the adapted libraries shared memory constructs as well as calls among different compartments (libraries) are marked with FlexOS specific placeholders. In the compilation process, the FlexOS toolchain replaces those placeholders with appropriate primitives for the selected 'Isolation Backend'. 
-    \item \todo[inline]{At least the mechanism of keeping function calls abstract and making them concrete during compilation corresponds to the concrete implementation of channels in the backend. TODO: How exactly is shared state translated?}
+    \item In our case, the programmer will also have to specify what the 'components' are. So far, this happens implicitly, through the structure of the code. If we ever get to the point where we actively change them, we will need markers in the code or configuration files. 
+    \item Basically, we also wrap function calls in runtime primitives for process communication. So in principle it is conceivable to have an architecture that also ensures memory isolation for processes. 
+    \item We do not have a predefined API to distinguish whether data is sent or shared between processes. Depending on the target architecture, the programmer can use reference types to avoid actually copying data and thus reduce memory overhead. For a shared memory backend in Rust this would be for example \rust{Arc<>} or \rust{RefCell<>}. However, the variables are passed through the same communication channels regardless of whether they are passed by reference or by value.
+    \item \todo[inline]{So is there a semantic reference? In the end its the programmer deciding what to do based on available methods of the architecture?}
+    \item Could we use Cubicle as an architecture? Probably not because when a programmer wants to share things by reference she can do so by hiding it from us essentially. So we have no clue in the backend when/how/if to use \emph{windows}. Also using them in encapsulated, out of scope functions makes no sense, because this essentially means sending the large things we only want to share by reference somewhere by value before sharing it  by reference ... So this probably also answers the prev. question.
+    \item One main difference to FlexOS and CubicleOS is, that they provide suitable implementations for system access calls. We do not do this. So in FlexOS and CubicleOS, the programmer needs to use the provided libraries for access to the kernel, devices or HW, in our case the programmer needs to do the same but she needs to chose them on her own and might need to adapt this choice depending on the target architecture.
 \end{itemize}
+
+
 
 \section{Compiling stateful imperative to Data Flow}
 "Making State Explicit for Imperative Big Data Processing
@@ -51,12 +51,95 @@ FlexOS~\cite{lefeuvre2021flexos}
     \item identified problem: support arbitrary (Java) state in BigData (with high scalability) and recover state upon failure
     \item approach: infer dataflow and 'types of state access' to derive a 'stateful dataflow graph'(SDG)
     \item they explicitly focus on 'large states', where distribution of such state to several nodes is desirable both for performance/(storage/compute) capacity and for recovery after failure 
-    \item SGD: "cyclic graph of pipelined data-parallel tasks, which exe-
-cute on different nodes and access local in-memory state" \means no explicit scheduling
+    \item SGD: "cyclic graph of pipelined data-parallel tasks, which execute on different nodes and access local in-memory state" \means no explicit scheduling
 \item to identify 'partial' and 'partitioned' stateful objects, they require annotations from the programmer
+\item they describe some concepts for parallel state handling and failure recovery, which might be helpful later
+\item Graph derivation itself is not to fancy/smart \means  they require different annotations from the programmer to identify how particular states should be used (e.g. if they are global, mutable, can be partitioned etc), 
+\item Limitiations:
+\begin{itemize}
+    \item programmer needs to annotate how states are used
+    \item programmers need to implement the required primitives to handle state in the graph themselves (serialization, definitions for partitioning and recovery) or use predefined classes
+    \item no side-effects on 'single valued' terms (marked by programmer), e.g. used as arguments for (stateful) computations
+    \item deterministic execution: that's basically a requirement for sem. correct failure recovery e.g. program should not depend on current time or similar external state 
+\end{itemize}
+\item We do not aim to distribute the state handling itself, otherwise limitations/prerequisites are pretty similar
+\item they work with checkpoints for failure recovery and synchronization of states and node replication (also for stateful nodes) to eliminate runtime bottlenecks \means not relevant for now, maybe later
 \end{itemize}
 
 "DFGenTool: A Dataflow Graph Generation Tool for Coarse Grain Reconfigurable Architectures "~\cite{mukherjee2017dfgentool}
 \begin{itemize}
-    \item based on LLVMIR
+    \item generates a graph representation (DFG in DOT format) from a given program in LLVM IR \means advantages are obv. language+backend independence, but also that Basic Blocks are already identified and separated easing the conversion to nodes.
+    \item available, though not maintained at \url{http://github.com/manideepam/DFGenTool}
+    \item LLVM already provides SSA form, the guarantee that values are used only once and that copies are produced for values entering diverging control flow, also supported data types, by the looks of it are only int, float and arrays. Also to handle reassignments load and store dependencies are derived using LLVM alias analysis module
+    \item \means maybe another example for easier scenarios but not helpful to get ahead, I might check how LLVM alias analysis module works though
 \end{itemize}
+
+"Automatic Extraction of Coarse-Grained Data Flow Threads from Imperative Programs" 
+\begin{itemize}
+    \item prototype compiler based on GCC for rec. C code
+    \item only pure functions
+    \item works on SSA representation
+    \item interesting part: building program dependency graph from SSA (PDG), fuse strongly connected components (SCCs) using dependency analysis (simplified, eg. no arrays) \means "typed fusion", aligning dependency and data flow to data-flow-program-dependency-graph DF-PDG \means conversion algorithms     
+    \item interesting also: mentions decoupled software pipelining (DSWP) technique \means Is it relevant for us?
+\end{itemize}
+
+\textbf{Automatically Restructuring Programs for the Web}~\cite{graunke2001automatically}
+\begin{itemize}
+    \item Caution: Paper is written in Scheme and in some parts badly abstracted from language features \means I might be wrong with some conclusions
+    \item identified problem: 'traditional' (as in local, sequential, shared memory) interactive programs automatically save execution state during user interactions, but for interactive server applications developers need to implement this manually.
+    \item paper presents (prototypical implemented) automated transformations, to turn a local interactive program into a CGI program
+    \item the setting is (or is it?) slightly different from ours, as they also need to handle typical web interaction problems as duplicating browser windows (i.e. the entry points for interaction), back tracking user interactions a.s.o.
+    \item Beside the 'you can port code easily' argument, they also argue as we do with better testing, debugging etc. of local code, being transformed to distributed only after the coding \means effectively they describe it as turning the program into a co-routine, with the other co-routine being the client. 
+    \item Manual refactoring is described as we had done for egress/ingress i.e. every resume point after an interaction with the client (in our case the other components) becomes a function. The original main function now takes +1 input for every client call, specifying the entry point function.
+    \item They mention an earlier approach to this, directly using continuations (cites 19 and 28 in the paper). The principle was that with Scheme, continuations could be derived and saved by the server automatically and assigned URLs, such that the client request can directly address the continuation. Problem was that this was a) language specific and b) had lots of overhead+distributed garbage collection 
+    \item So the idea was to not store the continuation in the server, but embed it in the control flow
+    \item For purely functional code transformation went as follows:
+    \begin{enumerate}
+        \item CPS: transform code to continuation passing style, i.e. make continuations explicit as arguments (I think, what we have are partial continuations)
+        \item Lambda Lifting: Turn continuation expression into top-level functions (as for us everything happens inside a single state, they need not be separate functions but can just be blocks in the arms of matches ... Anyways it's not that different)
+        \item Defunctionalization: Instead of passing the continuations as functions, a datatype/representation and an apply function are defined to a) represent a serializable (they say portable/can be marshaled) from of the functions b) interpret (actually the apply function is an interpreter isn't it?) the serialized functions to execute the corresponding code/continuation (concretely they derive a serializable structure for each lifted closure, capturing the required environment already when the form is send )
+        \item[] The mention that, upon transformation to CPS "External modules that accept function arguments must be transformed as well."??? Why?
+        \item The final step is, similar to us, to change semantics of prompting/asking for communication and control flow to according primitives for CGI ie. 'produce form' instead of prompting and looping to the beginning  if no continuation closure was returned.
+    \end{enumerate}
+    \item Note on \textbf{Security}: Instead of just passing input/output as in the original program, the derived program passes also information about the control flow inside the server/component. In this case, the whole continuation closures seem to be send. \means That is a good reason for dependency analysis i.e. do not send things, that do not belong to the other component \means but it remains a point that communication will leak execution state.
+    \item for \textbf{stateful computations} they have the problem, that Scheme assumes call-by-value by default \means particularly relevant for lambda lifting
+    \begin{itemize}
+        \item so they introduce boxes (a way in scheme to share/call-by references), boxes for stateful values must be globally known
+        \item they notice, that \emph{store} i.e. state changes are threaded through the program 'independent' from the control flow and needs to be saved between calls 
+        \item so they basically save and retrieve the state as cookies and send them along. \means We do 'the same' but with less overhead, when we save selected parts of the execution to the state of our components. Reading and Setting cookies is in equivalent to getting and setting fields of the state before and after the execution of wrapped functions. Passing them between calls is implicitly done, because our \rust{apply} function is a method (\rust{process_call}).
+    \end{itemize}
+    \item one important distinction between our model and their application scenario is, that we do not assume the control flow to spontaneously divert e.g. by a client adding a second 'device' analogously to a second session tab in a browser. I'm not sure if/how that influences difference in our solution.
+\end{itemize}
+
+
+\textbf{Cooperative Task Management without Manual Stack Management
+or, Event-driven Programming is Not the Opposite of Threaded Programming}~\cite{adya2002cooperative}
+\means I think they also describe the transformations we are looking at, at least the part after components are inlined  but they explain it as a process from automatic to manual stack management
+\begin{itemize}
+    \item they bring some arguments and nice explanations for different concepts in
+    concurrent programming in particular event-driven (cooperative tasks) vs. multi-threaded (preemtive or serial task management)
+    \item event-driven is (according to the authors) easier to reason about concerning concurrent correctness
+    \item anyways automatic stack management gets lost, bcs. it requires to dissect tasks, such that every subtask receiving an event (e.g. I/O in the original program) becomes a separate entry point \means this also means you loose big part of debugging info as the stack only tells you what happened since the last event came in
+    \item 'Stack Ripping' is what they call the process of dissecting functions into basic blocks and making those callable functions \means each block containing an entry point after I/O (in our case after returning through the main loop), must become a 'language-level' function
+    described required changes (same as we found out)
+    \begin{itemize}
+        \item function scope: more than one function now represent what was one function before \means trivial
+        \item automatic variables: variables that where allocated on the stack, but need to survive multiple function calls now, needs to go to the heap \means been there, done that
+        \item control structures: \means more entry points e.g. when looping \means more separate functions
+        \item debug stack: manual recovery for manual stack management obviously
+    \end{itemize}
+    \item the rest of the paper explains how both types of stack management can be/are used together using cooperative scheduling in Windows (using threads and fibers respectively)
+\end{itemize}
+
+Paper Stack Notes - Just for me now
+\begin{itemize}
+    \item Language-Agnostic Optimization and Parallelization for Interpreted Languages \means interesting is, that they don't use the language itself but analze (static+dynamic) traces from the respective interpreters (with all problems that implies as having to separate interpreter introduced flow/dependencies from code flow/dependencies), they derive (or propose to do so) parallelity on the LLVM IR level
+    \item Definitional Interpreters for Higher-Order Programming Languages \means very interesting for basic ideas (and wtf is GEDANKEN? Is it an actual language?), but for now to far off
+    \item "Automatic Extraction of Coarse-Grained Data Flow Threads from Imperative Programs" \means notes above
+    \item Software Compilation Techniques for
+Heterogeneous Embedded Multi-Core Systems \means paper from our chair (at east Jeronimo is on the author list), point is that compilers for MPSoC should except sequential code for the same reasons we bring forward, same time the backend has to distribute parallel tasks in a more coarse grained fashion than single-core compilers do (ILP) \means maybe, if we come to the conclusion that atuomatic extraction of components is possible and stateful components should be annotated, why not annotate them with target architecture directive \means anyway that's just a (faaaarrrr) outlook perspective
+\item DFGenTool: A Dataflow Graph Generation Tool for Coarse Grain Reconfigurable Architectures \means notes above
+\item Making State Explicit for Imperative Big Data Processing
+\end{itemize}
+
+\section{Automatic memory Isolation}

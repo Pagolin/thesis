@@ -1,12 +1,23 @@
 \section{Test Setup}
 \section{The YCSB}
 
-The "Yahoo! Cloud Serving Benchmark" YCSB \cite{YSBC} comprises a framework to compare the performance of different database and key-value-store implementations. The two key components are an adaptable client that generates workloads for a connected database and a set of core workload scenarios resembling common use cases of data base deployments. The open source implementation of YCSB\footnote{\url{https://github.com/brianfrankcooper/YCSB/wiki}} already includes the benchmarking setups for many commonly used systems as DynamoDB, Redis, Cassandra, MongoDB and many more. Adding new test targets is possible via an abstraction layer for the concrete database API. This abstraction layer called \code{database interface layer} has to provide concrete implementations for common database commands i.e. read, insert, update, delete and scan for the new data base. Also the YSBC client needs to be set up to connect to the concrete data base. \\
+The "Yahoo! Cloud Serving Benchmark" YCSB \cite{YSBC} comprises a framework to compare the performance of different database and key-value-store implementations. The two key components are an adaptable client that generates workloads for a connected database and a set of core workload scenarios resembling common use cases of data base deployments. The open source implementation of YCSB\footnote{\url{https://github.com/brianfrankcooper/YCSB/wiki}} already includes the benchmarking setups for many commonly used systems as DynamoDB, Redis, Cassandra, MongoDB and many more. Adding new test targets is possible via an abstraction layer for the concrete database API. This abstraction layer called \code{database interface layer} has to provide concrete implementations for common database commands i.e. read, insert, update, delete and scan for the new data base. Also the YCSB client needs to be set up to connect to the concrete data base. \\
 
-
+The problem we face when we try to use as a benchmark suite is, to actually connect it with an application running on M$^3$. The reason is, that we can not simply run YCSB itself on M$^3$, because it is written in Java and M$^3$ doe not provide a Java runtime. 
+The solution, the authors themselves used to benchmark the integrated database on M$^3$ was to use YCSB only to generate requests. Those requests where written to a file and custom importer and client apps where implemented to load the requests and send them to the M$^3$ levelDB implementation in benchmark tests. 
+We might use but need to 
+\begin{itemize}
+    \item adapt YCSB and/or kv-store to have matching request formats
+    \means should be doable given \href{https://github.com/Feliix42/YCSB/blob/master/ohua/src/main/java/site/ycsb/db/OhuaClient.java}{felix' Ohua client} 
+    \item need to get the files to m3 adapt importer if needed
+    \item need to find out how to connect the client at 
+    \url{M3/src/apps/bench/ycsb/ycsbclient} with the smoltcp application 
+    \item need to setup measurement    
+\end{itemize}
 
 \begin{itemize}
     \item \href{https://github.com/Feliix42/YCSB/blob/master/ohua/src/main/java/site/ycsb/db/OhuaClient.java}{felix' Ohua client}
     \item  $\rightarrow$ probably needs some adaptation or/and I need to change the current interface of the application so that it resembles the basic database interface
     \item in particular I'll need to add 'tables' to the key-value-store API
 \end{itemize}
+

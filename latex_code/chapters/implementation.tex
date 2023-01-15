@@ -1,36 +1,36 @@
-\section{Adaptations to make sequential smoltcp amenable to 'distribution'}
-\label{sec:ImplSmoltcp}
-\note{I might mention:
-While this work was being conducted, smoltcp was being further developed. In particular, the device became an independent component. This logically moves the structure of the library in the direction we are aiming for. 
-Therefore, we decided to use this new state of smoltcp as a further basis for the work and to adapt the previous changes accordingly. 
-}
-
-In this section we discuss, how our example application is composed using the original smoltcp API and how we need to transform the application itself, as well as smoltcp to make it amenable to compilation. 
-
-
-\subsection{The initial situation}
-In fact, there are two main aspects that need to be considered. The first is, that we need to present the compiler our target components and their basic interaction as stateful objects in the compile scope. It must be recognizable for the compiler, what the stateful components of the program are and how they interact. In particular, we must not as smoltcp currently does, give the device as a parameter to the TCP/IP component and let the later use the device 'under the hood', i.e. inside the library and outside the compile scope. The second aspect is, that all communication between components must be done explicitly via serializable messages, not via access to shared memory as before.
-
-Figure~\ref{fig:oldTopLevel} shows a simple example of a server application using smoltcp. Obviously, this code does not meet our compilation requirements. Concrete problems are 
+So our declared goal is to transform an application, written for a shared memory, single core runtime into a form, that is amenable to compilation with Ohua. Also the resulting compiled program should have the following properties:
 \begin{enumerate}
-    \item Sockets are logically a part of the TCP/IP stack and should not appear in the compile scope
-    \item In the call \rust{iface.poll} the state of an independent component, the device, is passed to the another component, the interface
-    \item There are several direct accesses to the internal states of other components, e.g. in \rust{socket.listen(6969)} the application directly accesses a state of the TCP/IP stack
-    \item States are not used linearly i.e. \todo[inline]{describe} 
+    \item The application should have three independent, stateful components, namely a key-value store answering requests, the TCP/IP stack and the device driver. 
+    \item Those components can run currently, i.e. it is possible to streamline process packages.
+    \item Those components are local to a single executing process each, i.e. no statefully used component is ever send from process to another
+    \item The final data flow program runs on the M3 operating system and architecture.
 \end{enumerate}
+
+To achieve this goal, both smoltcp and Ohua must be adjusted. Therefore, in this chapter we will first describe the structure of our smoltcp application and the necessary changes. Then we will describe how the current functionality of Ohua needs to be adapted and extended. Finally, we will describe what general transformations result from the adjustments made. 
+
+\section{Transformations in smoltcp}
+\label{sec:ImplSmoltcp}
+
+In its current sequential, single-threaded state, smoltcp makes use of several language features that Ohua's programming model does not support because they cannot be translated into a deterministic concurrent program. The first problem is the sharing of memory references between different components. If these components are executed concurrently, race conditions occur. It is thus roughly speaking necessary to replace all accesses to common references by explicit data flow. 
+
+The second fundamental problem is the current flow of control between stateful components. In a sequential program we can invoke a method on one component \emph{A}, do something on it's state, internally call a method on another component \emph{B} and finish the outer call by maybe changing \emph{A}s state again. \emph{A} and \emph{B} belong to the memory of the same process and the state of \emph{A} as well as the execution state of the outer method are automatically preserved during the call of \emph{B}.
+This is what happens, when a packet is send or received using smoltcp in its current form. However in a concurrent, distributed data flow graph, we can not realize this bi-directional dependency among stateful components. Why is that? The main problem here is realizing concurrency and state locality at once. We could connect distributed components A and B using blocking connections, i.e. \emph{A} calls \emph{B} and blocks until it receives the result. What we achieve this way is a distributed, sequential program. Another way would be to have \emph{A} send its state along with the call to B and B would return this state along with its answer. So \emph{A} can process the next input and upon receiving an answer it can resume the appropriate state. However, this contradicts the requirement of state locality. In particular when states are large objects e.g. a database state, a training state of a deep neural network or alike, we want them to stay encapsulated in on component.\\
+\note{What we do here is also required to support method compilation with Ohua in general}
+
+So to compile to a distributed program with local components of smoltcp, we need to disentangle state dependencies from each other. In the following subsection, we explain how this can be done using a small example key-value store application. We begin with introducing the concrete program and sketching the structure of the target program.
+
+\textbf{The Initial Situation: } In Figure~\ref{fig:oldTopLevel} we see the code for our simple key-value store application. First the required structures, i.e. the \rust{ip_stack}, the \rust{device}, the \rust{store} and some sockets are initialized. Then in the \rust{ip_stack.poll} call the socket and the device are used to send the messages from the sockets to the device and vice versa. Then, depending on the state of the socket, the store answers received messages directly to the socket. Finally the application holds for a time interval determined by a) the current state of the sockets \rust{ip_stack.poll_delay} and b) the current state of the device, represented by waiting for its file pointer \rust{fd} to become available. After that, the interface exchanges messages again.
 
 
 \begin{figure}[H]
     \centering
     
-\begin{minted}[fontsize=\small]{rust}
+\begin{minted}[fontsize=\footnotesize]{rust}
 fn main() {
-
     let mut store = Store::default();
-
     let mut device = TunTapInterface::new("tap0", Medium::Ethernet).unwrap();
     // ... more interface initialization code
-    let mut iface = builder.finalize(&mut device);
+    let mut ip_stack = builder.finalize(&mut device);
 
     let mut sockets = SocketSet::new(vec![]);
     // .. more socket initialization code
@@ -39,7 +39,7 @@ fn main() {
 
     loop {
         let timestamp = Instant::now();
-        match iface.poll(timestamp, &mut device, & mut sockets) {
+        match ip_stack.poll(timestamp, &mut device, & mut sockets) {
             Ok(_) => {}
             Err(e) => {
                 debug!("poll error: {}", e);
@@ -66,197 +66,439 @@ fn main() {
             socket.close();
         }
 
-        phy_wait(fd, iface.poll_delay(timestamp, &sockets)).expect("wait error");
+        phy_wait(fd, ip_stack.poll_delay(timestamp, &sockets)).expect("wait error");
     }
 }
 \end{minted}
-    \caption{Simplified example of a server application using smoltcp}
+    \caption{Simplified example of a key-value server application using smoltcp}
     \label{fig:oldTopLevel}
 \end{figure}
 
 
-\subsection{The Goal}
-So to better understand the required code changes we start at the top-level. How does the code we have seen in the previous section need to look like to produce the desired output program. Figure~\ref{fig:newTopLevel} illustrates the code we want to achieve. The first, and most trivial change is encapsulating initialization into \rust{init_<component>()} functions. This also entails encapsulating the sockets and the interface from the original code into one component.
-\todo[inline]{refactor exapmle and add description when I know how I handle the socket handles}
+ Obviously, this code does not meet our compilation requirements. Concrete problems are 
+\begin{enumerate}
+    \item There are several stateful uses of \rust{socket}, e.g. in \rust{socket.listen(6969)}. However we do not want those to be visible to the compiler, since they would result in their own, stateful nodes. This is basically a problem of efficient resource utilization, as every node incurs the overhead of an independent process or thread of the target architecture.  
+    \item In the call \rust{ip_stack.poll} the \rust{device} is passed as an argument. This means the compiler can not \emph{see} the device being used as an independent component and will not derive the according code.
+    \item The \rust{ip_stack} is statefully called twice inside the loop. This means the compiler will not be able to derive a single node acting on/as the \rust{ip_stack} but instead wil derive a data flow where the \rust{ip_stack} is send from one node using it to the other. 
+    \item We cannot simply transfer the mechanism of \rust{phy_wait(fd,...)} to another operating system. For one thing, the function itself is a system call, which means it depends on the operating system. Secondly, \rust{fd} is a file pointer and the handling of pointers and files is also strongly dependent on the target operating system and architecture.
+\end{enumerate}
 
-Second we notice that each of our components is used only once in our target program. The function \rust{poll} that contains the interaction of  TCP/IP stack and the device to receive and send messages must become a pure function, i.e. taking both the TCP/IP stack and the device as arguments. We must lift it into compile scope and refactor the  usage of both components in the function to also follow our programming model. To enable this linear usage of states, we obviously need to transform the way those stateful components work in smoltcp. In Section~\ref{subsec:StateThreading} we further illustrate the problem and explain how to approach it.
+So given this initial code setting and the problems we need to solve to enable the compilation, we can now proceed with describing the actual changes made in this work. 
 
-Thirdly we see, that the communication between the components does not happen through mutual access to states anymore. For example, instead of accessing a socket directly via \rust{let socket = sockets.get_mut::<tcp::Socket>(tcp_handle);} we need to implement a data format and a command interface in both the \rust{app} component and the \rust{tcp_ip_stack} to enable such interactions via message passing. We discuss this issue in Section~\ref{subsec:MessagePassing} and present our implementation as a possible solution.
+\subsection{Sketching the Target Structure}
 
-\begin{figure}[H]
-    \centering
-    
-\begin{minted}[fontsize=\small]{rust}
+To better understand the transformations described in this chapter, we will figure out the structure of the target program first. We want each of the target components to be used exactly once inside the scope as an object a method is called on. Further we want all implicit state sharing, i.e. the common use of references between components to be eliminated and be replaced by actual explicit message passing. Finally we want function calls, other than the three stateful calls and the initialization of our object to happen outside the compile scope in order to restrict the resulting data flow graph to as few nodes as possible and to generate an efficient program. \\
+
+The first step to get a clearer picture of our goal is to wrap code details the compiler does not need to see into function calls. So as a first step and to get a clearer picture of our target structure, we encapsulate the initialization of components. Also we saw in the original code in Figure~\ref{fig:oldTopLevel} \rust{sockets} being processed, \emph{loaded} with messages by the \rust{store} and than passed to the \rust{ip_stack} along with the \rust{device} for actually processing the TCP/IP packets. So we could figure to use the \rust{sockets} are the vehicle we use for communication among the \rust{ip_stack} and the \rust{store} for now and encapsulate the socket handling in the \rust{store.handle_message} call. Also we let the store application handle the result of \rust{ip_stack.poll}. 
+Now our Code looks as follows:
+
+\begin{minted}[fontsize=\footnotesize]{rust}
 fn main() {
-    let mut app = init_app();
-    let device = init_device();
-    let (mut tcp_ip_stack, socket_handle) = init_tcp_ip_stack(device);
-    // Contains: Actual payload messages for the sockets i.e. like {handle:[msgs]} and socket state information
-    let socket_proxy_state = init_socket_proxy();
-    while true {
-        let states_n_data = poll(tcp_ip_stack, device, socket_proxy_state);
-        let processed_data:CommandsAndMessages = app.do_your_thing(states_n_data);
-        socket_proxy_state.update_all(processed_data) 
+    let (mut store_app, mut sockets):(App, SocketSet) = init_app_and_sockets();
+    let (mut ip_stack, mut device, fd):(Interface<'static>, TunTapInterface, RawFd) = 
+      init_stack_and_device();
+
+    loop {
+        let timestamp = Instant::now();
+        
+        let (poll_result, sockets_polled) = 
+          ip_stack.poll(timestamp, &mut device, sockets);
+
+        let sockets_loaded = store_app.handle_sockets(poll_result, sockets_polled);
+
+        sockets = 
+          phy_wait(
+            fd, 
+            ip_stack.poll_delay(timestamp, sockets_loaded))
+            .expect("wait error");
     }
 }
 \end{minted}
-    \caption{To enable Ohua to extract a data flow graph with local states we need to lift the envisioned stateful components 'app', 'tcp\_ip\_stack' and 'device' and their interaction into compile scope as shown here.}
-    \label{fig:newTopLevel}
+
+Now to get an idea of the target structure without going to much into detail, we make the following assumptions: \\
+i) We assume for the time being that there is a simple control flow inside \rust{ip_stack.poll} going from the \rust{ip_stack} to the \rust{device} for sending, back to the \rust{ip_stack}, and\\
+ii) We know that the \rust{phy_wait} call takes an input from the device, namely the file pointer \rust{fp} and an input from the \rust{ip_stack}, namely a waiting time from the sockets and halts the loop for a certain interval before the \rust{ip_stack} can poll again. Given this structure, we assume we can prepend the calls involved in \rust{phy_wait} to the execution of \rust{poll} itself. 
+Applying this assumptions, we get a control flow as depicted in Figure~\ref{fig:mainLoopOriginal}. We see an inner loop among the \rust{ip_stack} and the \rust{device} and an outer loop among the \rust{ip_stack} and the \rust{store}. As smoltcp can be used heapless, all process steps act on shared references instead of moved owned values.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=5cm]{figures/outer_scope_before.png}
+    \caption{Simplified structure of the original process loop}
+    \label{fig:mainLoopOriginal}
 \end{figure}
 
-Finally we have to use a recursion instead of a \rust{while} loop. This is a current restriction of Ohua which we discuss in more detail in Section~\ref{subsubsec:WhileLoops}. 
-\note{Note to me: Ohua also supports 'endless' for loops. However we have no way of gracefully ending them as we a) can not access the loop generator while running and b) we do not support early returns i.e. \rust{break} or \rust{return}}
-\todo[inline]{figure out recursion}
+Now for this simplified structure, we can already see what needs to be done to achieve our target characteristics. We need to move the inner loop inside \rust{poll} into the main scope.
+For now we assume we had simply split \rust{poll} into parts e.g. asking the \rust{device} for availability, waiting before poll, preparing packets and sending them. And we create a method \rust{ip_stack.process()}, that can execute either of those parts, based on the input.
+Also we change all method signatures to explicitly return and except values instead of references.This directly results in the structure shown in Figure\ref{fig:mainLoopTarget}. 
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=5cm]{figures/outer_scope_target.png}
+    \caption{Simplified structure of the target process loop}
+    \label{fig:mainLoopTarget}
+\end{figure}
+
+Without looking at the inner workings of poll in detail, we can already recognize essential properties of the target program here
+
+\begin{enumerate}
+    \item The final structure is a nested loop.
+    \item Since we want to use only one method call for the \rust{ip_stack}, it must return a type which can be either an input for the \rust{device} or the \rust{store}.
+    \item The calls to \rust{device} or the \rust{store} must return a common type that \rust{ip_stack.poll} accepts\footnote{you could also return different types. However, then an additional node would be needed to convert them to a common type}.
+    \item In the original structure, the \rust{device} was called inside the \rust{poll} function. Therefore, after each call to \rust{device}, the control flow automatically returned to the execution state of \rust{poll}. Now the substeps of \rust{process} are individual method calls. That means we will need a way to transfer the execution state of \rust{poll} from one call to the next. 
+\end{enumerate}
+
+In the next sections, we will first take a closer look at the control flow in poll. We will describe how to implement inner loop extraction and what problems arise when converting reference arguments to moved objects, i.e. call by reference to call by value.
+
+\subsection{Encapsulating the Socket Handling}
+\label{subsec:SocketHandling}
+In sketching the target program, the first change made to the original code was to encapsulate as much of the logic as possible into either the states or the initialization functions. As a first guess, the socket handling i.e. checking if sockets are open, setting them to listening state etc. was encapsulated in the \store{.handle_sockets} call. The problem with this decision is, that the actual \rust{SocketSet} type contains lifetime bound references, meaning they do not implement \rust{Clone} and we can not just replace passing them by reference with actually moving them. Implementing a custom, owned version of the \rust{SocketSet} would be a remedy for this problem. However, the internal references are actually different buffer types used in the sockets and manipulated in many places in the core logic of smoltcp. This means that implementing a custom, owned \rust{SocketSet} type would not only result in extensive changes, but would also negatively affect the efficiency of the program. The other option is to not send the sockets, but only the required information among components. What this required information is, depends on the interaction on how either of the components involved interacts with the sockets. For our example key-value store application, the interaction between sockets and \store{} is fairly simple. The \store{} receives a message from a socket and answers it. As we will later see, the interaction between the \stack{} and the sockets is rather involved. So instead of having a free-floating \rust{SocketSet} in the main scope, we make it part of the \stack{} upon initialization. This also means, we need to move the code for handling the sockets into the \stack{} as well and return to the \store{} not directly after polling, but when a socket is processed. We will discuss how this is done in Section~\ref{}\todo[inline]{Where?!}. The main point here is to illustrate the problem of designing the interfaces between components, if they are not clearly defined in the first place. A less simple case could have involved for instance conditional opening or closing of sockets by the \store{} based on concrete messages, time, traffic volume etc. and would have required an extended message interface between the \stack{} and \store{} and potentially a replication of the sockets in both components updating each other via this interface. Such information can hardly be automatically derived, in particular from static, purely syntactic information from high-level language input code.
 
 
+\subsection{Refactoring Packet Sending}
+The next step is to refactor the \rust{poll} method. We need to bring the stateful usage of the \dev{} into the compile scope and create a single \emph{entry method} the three 
+components use to call each other. This \emph{entry method} will internally dispatch each call to the actual method, or generally code to be called on the states.\\
 
-\subsection{Transformations needed for state threading}
-\label{subsec:StateThreading}
-\todo[inline]{Adapt to better fit in the general flow}
-
-In a sequential, single threaded program we can invoke a function on one 'component A', do something on it's state, call a function on another 'component B' and finish the outer call by maybe changing 'A's state again. This is what happens, when a packet is send or received using smoltcp in its current form. However in a concurrent, distributed data flow graph, we can not realize this bi-directional dependency among stateful components. Why is that? The main problem here is realizing concurrency and state locality at once. We could connect distributed components A and B using blocking connections, i.e. A calls B and blocks until it receives the result. What we achieve this way is a distributed, sequential program. Another way would be to have A send its state along with the call to B and B would return this state along with its answer. So A can process the next input and upon receiving an answer it can resume the appropriate state. However, this contradicts the requirement of state locality. In particular when states are large objects e.g. a database state, a training state of a deep neural network or alike, we want them to stay encapsulated in on component.\\
-
-So to distribute the components of smoltcp, we need to disentangle state dependencies from each other. In the following subsection, we explain how this can be done using the TCP/ipv4 implementation of smoltcp. We will look in particular on how our envisioned components 'application', 'tcp/ip stack' and 'NIC' are connected during packet sending, receiving and finally in the \rust(poll()) call, that connects both. For each of those processes we will discuss how to transform the implementation of smoltcp, to extract a data flow graph using Ohua. 
-\todo[inline]{Refer to linear State use here when the according background section is ready}
-
-
-\subsubsection{Sending a Packet}
-Figure~\ref{subfig:egressOrig} depicts a simplified control flow during the sending a package, in particular the \code{TCP/IP} component actually represents a nested structure and function calls. The point is however, that when our envisioned component \code{APP} call our envisioned component \code{TCP/IP} which in turn calls \code{NIC}, the callers have to keep their state and block execution until the callees return. This will not be the case, when we deploy those components as part of a data flow graph. In this case, each of the components will process any input based on its state output a result and wait for the next input. So we basically need the components to 'stream process' data. The second Figure~\ref{subfig:egressTransf} illustrates, how this can be done in our example. The forward pass of the call is basically the same as before, but we introduce conditionals to gate the data flow down the stack. The backward pass returning the result of sending is processed not by returning to the pre-call stack position, but also by explicitly passing a message through the components again. 
-\todo[inline]{Describe where the if's belong to, mention order is preserved.}
-
+The code of \rust{poll} is depicted in Figure~\ref{fig:pollCode}. The method itself contains a loop calling \rust{socket_egress} which executes sending packets to the \rust{device} and \rust{socket_ingress} which receives packets and distributes them to the \rust{sockets}. As long as there are packets send or received in each loop, \rust{poll} continues. \\
 
 \begin{figure}[H]
     \centering
     
-\begin{minted}[fontsize=\small]{rust}
-// interface.rs
-fn socket_egress(&mut self) -> Result<bool> {
-    /* get references to  device, inner_interface and sockets
-       hold by the interface struct
-       iterate sockets -> socket
-       ask inner_interface if socket can egress
-    */
-    ...
-        
-        let mut device_result = Ok(());
-        let socket_result = socket.dispatch(
-                inner, 
-                |inner, resp| {
-                    let response = IpPacket::Raw(response);
-                    neighbor_addr = Some(response.ip_repr().dst_addr());
-                    let tx_token = device.transmit().ok_or(Error::Exhausted)?;
-                    device_result = inner.dispatch_ip(tx_token, response);
-                    device_result
-                    }
-            );
+\begin{minted}[fontsize=\footnotesize]{rust}
+pub fn poll<D>(
+    &mut self, timestamp: Instant,
+    device: &mut D, sockets: &mut SocketSet<'_>,
+    ) -> Result<bool>
+    where
+        D: for<'d> Device<'d>,
+    {
+        self.inner.now = timestamp;
+        let mut readiness_may_have_changed = false;
 
-        match (device_result, socket_result) {
-            // Error handling ...
+        loop {
+            let processed_any = self.socket_ingress(device, sockets);
+            let emitted_any = self.socket_egress(device, sockets);
+            if processed_any || emitted_any {
+                readiness_may_have_changed = true;
+            } else {
+                break;
+            }
         }
-    // if any packet has been send:
-    Ok(emitted_any)
+        Ok(readiness_may_have_changed)
+    }
 }
 \end{minted}
-    \caption{Simplified code of the \rust{Interface.socket_egress} method}
+    \caption{Simplified code of the \rust{ip_stack.poll} method}
+    \label{fig:pollCode}
+\end{figure}
+
+As we can see the \dev{} reference is passed further down into two method calls, the receiving method \rust{socket_ingress} and the sending method \rust{socket_egress}. We will start with explaining the transformations in \rust{socket_egress}, because it is structurally  more complex than \rust{socket_ingress} and therefore better suited to demonstrate all necessary transformation steps.
+
+\subsubsection{Bringing \dev{} calls into scope}
+\label{subsec:DeviceLifting}
+Figure~\ref{fig:egressCode} shows how sending packets proceeds as a loop over the socket items. If a \rust{socket} can send, its \rust{socket.dispatch} method is called passing a reference to the \stack{} and the \rust{respond} closure. As our example works with TCP sockets, inside \rust{dispatch} the \rust{socket} prepares a TCP packet and passes it to the \rust{respond} closure. This closure will then try to get a sending token from the \dev{} and pass the token and the TCP packet. The token is basically a direct reference to the sending buffer of the \dev{}. Finally inside the \rust{inner.dispatch} call of the \rust{stack} will wrap the TCP packet into a network representation e.g. an Ethernet frame and directly write that packet into the device buffer using the token.\\
+ 
+\begin{figure}[H]
+    \centering
+    
+\begin{minted}[fontsize=\footnotesize]{rust}
+fn socket_egress<D>(&mut self, device: &mut D, sockets: &mut SocketSet<'_>) 
+-> bool
+    /*where*/
+{
+    let Self {
+        inner,
+        ..
+    } = self;
+    let mut emitted_any = false;
+    for item in sockets.items_mut() {
+        if ! can_send(item, inner.now) {
+            continue;
+        }
+
+        let mut neighbor_addr = None;
+        let mut respond = |inner: &mut InterfaceInner, response: IpPacket| {
+            neighbor_addr = Some(response.ip_repr().dst_addr());
+            let token = device.transmit().ok_or_else(|| {
+                /*logging*/
+                Error::Exhausted
+            })?;
+
+            inner.dispatch_ip(token, response, None)?;
+            
+            emitted_any = true;
+
+            Ok(())
+            };
+
+        let result = match &mut item.socket {
+            Socket::Tcp(socket) => socket.dispatch(inner, |inner, response| {
+                respond(inner, IpPacket::Tcp(response))
+            }),
+            // .. other socket types
+        };
+        
+        match result {
+            // stop looping if the device was exhausted
+            // update socket if adress was wrong
+        }
+    }
+    emitted_any
+}
+\end{minted}
+    \caption{Simplified code of the \stack{.socket_egress} method}
     \label{fig:egressCode}
 \end{figure}
 
+ The \dev{} is used twice in this method. Once for receiving a token in the \dev{.transmit()} call, a second time implicitly when this token is used to pass a packet to the device. This happens inside \stack{.inner.dispatch_ip}. Both of this calls happen inside the \rust{socket.dispatch} method. If we look into this method and inline the code of the \rust{response} closure we get the following structure: 
+ 
+\begin{minted}[fontsize=\footnotesize]{rust}
+//socket.dispatch(...)
+    /*check socket state*/
+    if /*a packet can be produced*/{
+        let packet = /*produce packet*/;
+        neighbor_addr = Some(response.ip_repr().dst_addr());
+        let token = device.transmit().ok_or_else(|| {
+            /*logging*/
+            Error::Exhausted
+        })?;
+        inner.dispatch_ip(token, response, None)?;
+        emitted_any = true;
+        Ok(())
+        /* 
+        if no error occured, update socket state
+        using the packet information        
+        */
+    } else {
+         return Ok(())
+    }                    
+\end{minted}
+
+The method starts with a preparation phase were the socket state is checked. If no packet can be produced, the it returns with \rust{Ok(())}. If a packet is produced, a token is required and if successful the packet is send. Afterwards the socket state is updated using information from the packet. If any of the steps fail, the control flow returns an error to the outer scope i.e. to the sending loop. 
+
+\todo[inline]{Find better Name}
+\textbf{Refactoring Packet Processing}
+
+To lift device usage into compile scope, we need to inline the content of \rust{socket.dispatch}. This means we refactor a function scope i.e. a separate stack frame to a simple scope in the outer stack frame. Scopes are expressions in Rust. So there are two different ways of returning values from scopes. One is to simply end the scope with an expression. In this case, the scope simply returns the value of that last expression to the outer scope. The second is to use explicit \rust{return} or \rust{?}. They will not only return a value or an error to the surrounding scope, but leave the current stack frame. \\
+
+ So to inline function with early returns or \rust{?}, we need to refactor the early returns to conditional execution i.e. we need to 
+ \begin{enumerate}
+     \item instantiate a \rust{let result;} at the beginning of the method and whenever either a \rust{return x} or a \emph{expression}\rust{?} appears
+     \item replace any returning statement including the final return by binding the potential early return values to the \rust{result} variable, in our example for instance \rust{result = inner.dispatch_ip(token, response, None);}
+     \item wrap every subsequent code into a conditional and, 
+     \item return the assigned \rust{result}
+ \end{enumerate}
+\todo[inline]{reference further details in the 'general learnings' or 'not yet supported syntax' section if I have time to spell it out}. 
+Now we can safely inline the code. \\
+\todo[inline]{figure for inlined code}
+\todo[inline]{learnings \means refactoring early returns needed for inlining, otherwise inlined code must comply prog. mod.}
+
+After lifting \rust{socket.dispatch} into scope, the steps before and after the device usage can be re-encapsulated into package pre-processing \rust{socket.dispatch_before} and the socket post-processing and after sending \rust{socket.dispatch_after}. Thereby we see another refactoring problem. When we split execution steps into different functions. In the original code, the 'packet' i.e. the two representations where used in emit and afterwards to update the socket without any referencing or cloning. This was possible, because they implement \rust{Copy} and can therefor be implicitly duplicated. This still works when we inline the socket.dispatch code because still any processing of the packet happens in a single, now extended stack frame. However it stops working as we re-encapsulated packet handling before and after sending. The reason is, that with that re-encapsulation the frame producing the packet (i.e. the pre-process call) is gone, when we want to send it. \\
+\note{This would also happen if we did not re-encapsulate but left the code inside poll. The reason is, that in any case the steps will be interrupted by a call to the device i.e. by leaving the current stack frame}
+
+To fix this problem, we introduced a heap-allocated version of the package data type. Also, pre-processing now returns two copies of the packet so that one can be used for sending and one for post-processing the socket. 
+\note{This is a general problem when we want to make sequential code concurrent or even distributed. In the first case, types need to be transferable from one function stack. Ohua can not recognize, nor can we automatically implement something like copy, clone or serialization for 
+types. Before we assumed, that arguments are always passed by value and 
+that serialization in the chosen backend is available for all types used as arguments in the compile scope i.e. all types that are send among nodes later. If we tried to implement refactorings/transformations in the compiler that a) split functions or b) bring code into scope that wasn't before, we need to extend this assumption to all code possibly affected by the transformation}
+\todo[inline]{figure for refactored code}
+\todo[inline]{Note that this refactoring need to happen on the implementers of the socket trait individually, because we need to split concrete implementations of dispatch}
+
+
+\textbf{Refactor token usage}
+Now we need to eliminate the implicit use of the \dev{} inside \stack{.inner.dispatch_ip(token, response, None)}. The sending \rust{token}, passed to this method contains a reference to the \dev{}s sending buffer. So the function as it is violates two requirements by using shared references among components and using one component implicitly inside the other.
+Contrary to packet processing, this method ends with the call to the device, meaning there are no state changes occurring after the sending and except the sending result, nothing depends on the actual device behavior. This means, we can separate the packet preparation inside \stack{.inner.dispatch_ip(token, response, None)}, from the effective packet sending in the device, making both steps local to their component. For the \stack{} we provided a local implementation of the sending token. Like the original token, the \rust{LocalToken} holds a reference to a buffer and implements the expected \rust{token.consume} method. Also we replaced the direct call to \stack{.inner.dispatch_ip}, by a wrapper function \stack{.inner.dispatch_local}. That function instantiates a local sending token, executes \stack{.inner.dispatch_ip} and returns the token buffer
+containing the packet. On the other hand the device needs an explicit sending method, instead of an implicit call via the token. This new \dev{.send} method basically needs to call the \rust{token.consume} method on a given token, with a given packet. Therefor we do not need to have specific implementations for implementers of the \rust{Device} trait, but can implement \rust{send} directly on the trait. The method \rust{token.consume} does not take a packet, but a closure processing a packet and copying it into a given buffer. Both already happened in the \stack, so we only need a closure, that copies the given packet into the actual device buffer. Finally, with respect to our target architecture there is no particular use in requesting and returning actual tokens to the device any more. In a distributed system, file pointers as contained in the tokens can not trivially be send among components. Therefor, instead of sending tokens we only request them locally in the device when needed and send \rust{Result<()>} to the \stack{} instead. Hence the implementation of the sending function looks as follows:
+
+\begin{minted}[fontsize=\footnotesize]{rust}
+pub trait Device<'a> {
+    type RxToken: RxToken + 'a;
+    type TxToken: TxToken + 'a;
+    // ... 
+    
+    fn send(&'a mut self, timestamp:Instant, packet:Vec<u8>) -> Result<()> {
+        let sending_result
+            // Request a token locally
+            = self.transmit().ok_or_else(|| {
+                        net_debug!("failed to transmit IP: {}", Error::Exhausted);
+                        Error::Exhausted
+                    }).and_then(|token|
+                    // copy the packet to the devices sennding buffer
+                   token.consume(timestamp, packet.len(),
+                     |buffer| Ok(buffer.copy_from_slice(packet.as_slice()))));
+        sending_result
+    }                 
+\end{minted}
+
+\note{The functional split between device and \stack{} can hardly be derived  automatically and in particular statically. Actually I don't think its possible. What needs to be understood by the compiler is 1. there are no state changed in the interface depending on the device reaction 2. tokens contain references to the device i.e. to buffers, file pointers etc. 3. we can split the closures passed to token\_consume into 'preparing a packet and copying it to a local buffer' and 'copying it to the actual buffer'. We also can not just send the closures. What might be possible is to 1. analyze what arguments from the ipstack the closure takes, 2. send those arguments to the device and 3. have the actual closures stored as functions in the device and execute them. Not quite clear if this would work ... Device would need to know which closure to execute, what happens if they are nested etc. pp.}
+
+\subsubsection{Refactor to Message Passing}
+
+We inlined the code for \rust{socket_egress} into \rust{poll} and lifted the usages of the \dev{} into the scope of the \rust{poll} function. This also means that the control and data flow for sending are now explicit in the \rust{poll} function. Figure~\ref{fig:egressInlinedFlow} shows the principle structure of the sending loop at this stage. The actual code at this point can be found in the Appendix~\ref{appFig:egressInlinedOriginal}. As indicated by dashed and solid errors in the graph, the control flow and the data dependencies of the individual steps are not congruent. In particular the currently processed \rust{socket} is needed in multiple steps in the \stack{}, but not needed by the \dev{}. 
+
 \begin{figure}[H]
     \centering
-\begin{minted}[fontsize=\small]{rust}
-// tcpsocket.rs
-pub(crate) fn dispatch<F>(&mut self, inner: &mut InterfaceInner, emit: F) -> Result<()>{
-    /* check socket state using the inner interface
-       maybe reset socket state and/or return an ErrExhausted
-    */
-    ...
-    // build IP representation
-    let mut ip_repr = 
-    // build TCP representation
-    let mut tcp_repr = 
-    // set fields of the tcp packet, based on socket state and
-    // inner state, adapt ip packet (payload len)
-    ...
-    // This calls the closure from outer scope
-    emit(inner, (ip_repr, tcp_repr))?;
-    
-    // If this point is reached, emitting succeeded and
-    // socket state is updated based on the tcp_repr send e.g.
-    ...
-    self.remote_last_ack = repr.ack_number;
-    
-    
+    \includegraphics[scale= 0.36]{figures/egress_inlined_detail.png}
+    \caption{Structure of the packet sending loop after lifting all device usages into scope. 
+    Solid arrows indicate actual control flow, dotted arrows indicate data dependencies}
+    \label{fig:egressInlinedFlow}
+\end{figure}
+
+\textbf{Refactoring control flow}
+
+Currently the sending loop happens entirely inside or above the stack frame of \rust{poll}. That's why is is possible to use data references and resume execution automatically after the \dev{} is called. We need to refactor the loop such that it is possible to return to the frame of the main function when the \dev{} is called and resume the execution inside the \stack{} afterwards. As method calls of the two components are interleaved, we can not just merge the calls of each component i.e. call the \stack{} to get a packet, call the \dev{} to send it and modify the \stack{}s state again based on the \dev{}s response\footnote{Actually this is an opportunity if state changes in each component are either idempotent or ordered i.e. implemented as Conflict-Free Replicated Data Types. Both is not the case here.}. This necessarily means, we need to split the execution of \rust{poll} into several method calls and we need to preserve the state of execution and the state of variables inside \rust{poll} from one sub-call to the next. 
+
+When we split the \stack{.poll} method, or in general any method into separate \emph{sub-methods}, we have two options to transfer data from one call to another. One is pass them explicitly, the other one is to make them part of the state. Serialization is generally expensive and also in terms of security and process isolation, it is desirable to only send data around that is actually needed in other components. Analyzing the data dependencies between the \stack{} and the \dev{} it is obvious, that the only arguments the \dev{} calls require are the packet to send and in the actual implementation a timestamp and the length of the packet. So except for the packet no data needs to leave the \stack{} towards the \dev{}. We will therefor only integrate the packet into the explicit data flow, and preserve the state of other variables in the state of the \stack{}.\\
+
+A common obstacle in both data handling options is the elimination of reference usage. As explained in Section~\ref{subsec:Rust} Rusts Type system will point to a problem, when we try to share references among different stack frames. By splitting the original \stack{.poll} method, we execute code that was supposed to run in one stack frame in multiple frames. This means we can not simply use the data types of the original program. In particular, regardless if we send data or store them in a state between function call, they must not use references among each other. This is obvious for serialized data, as references serialized and send to processes potentially running on a different machine loose their relation to memory. For the case of data stored in a state, consider the following example from our problem. The sending loop is an iteration over the \rust{sockets}. So at the point, where a packet is produced, there are four references to the same memory location in scope namely i) the sockets ii) the iterator on the sockets iii) the current socket and iv) the packet, which actually is a reference to memory inside the socket until it is finally send. As mentioned before, packets need to be become an owned data type to be sendable to the \dev{}. Which eliminates the fourth reference. However we also need to store the state of iteration and the current socket in the state, without references to the sockets. It is in general not possible to return a \rust{struct} with fields referencing each other in Rust, because the consistency of references can not be guaranteed\footnote{Actually there are ways to achieve memory consistency across function calls in Rust using e.g. the \rust{std::pin} module. However they are not applicable to other languages so we do not consider them here.}. In particular we can not have a socket, referencing an iterator, referencing the sockets in our current state, since any of those reference could become independently invalid leaving dangling references. \\
+
+The problem was solved by implementing an owned representation of the iteration state. As shown in, we integrated the current state of \stack{.socket_egress} as a separate, optional field to the \stack{}. Instead of saving an iterator and a reference to the current socket, only an index of the current socket in the socket set is stored. The socket itself must be retrieved in ever step using it. This also implied, that we need to rewrite the iteration on the socket set. Instead of using the given \rust{Iterator} implementation, we implemented iteration over the size of the socket set, starting at the currently saved index. We did the same for the other intermediate results of the original method \rust{neighbor} and \rust{packet} and \rust{address}. The resulting definition of the \stack{} data type is shown below. 
+
+\note{What we can learn here are two things a) a lambda lifting for method may include turning enclosed values to part of the state instead of explicit arguments and b) as long as the compiler is not smart enough to transform references to owned data (which has quite some implications on the code structure) we need to extend the requirement of 'no shared refs, no calls on refs, no refs anywhere in scope anyway' to all the code the compiler might touch.}
+
+\begin{minted}[fontsize=\footnotesize]{rust}
+struct Interface<'a> {
+    ..,
+    egress_state: Option<EgressState<'a>,
+}
+struct EgressState<'es>{
+    sockets_during_egress: Option<SocketSet<'es>>,
+    current_index: Option<usize>,
+    current_neighbor:Option<Address>,
+    current_presend_packet: Option<IpPacketOwned>,
+    current_postsend_packet:Option<IpPacketOwned>
 }
 \end{minted}
-    \caption{Simplified code of the \rust{socket.dispatch} method}
-    \label{fig:dispatchCode}
-\end{figure}
 
-\begin{figure}[H]
-\centering
-\tabskip=0pt
-\valign{#\cr
-    \hbox{%
-    \begin{subfigure}{.3\textwidth}
-    \centering
-     \includegraphics[height=5cm]{figures/egress_original_simple.png}
-     \caption{Original flow of a packet sending call}
-     \label{subfig:egressOrig}
-    \end{subfigure}%
-  }
-  \cr
-  \noalign{\hfill}
-    \hbox{%
-    \begin{subfigure}{.65\textwidth}
-    \centering
-    \includegraphics[height=5cm]{figures/egress_new_simple.png}
-     \caption{Refactored control flow of the egress function call}
-     \label{subfig:egressTransf}
-    \end{subfigure}%
-  }
-  \vfill
-  \cr
+Now the control flow needs to be refactored, such that the device is called in the main scope and \dev{} and \stack{} have each only one method call visible to the compiler. This method will be \emph{entry point} of both states and internally dispatch the call to the required code. We will call the method \rust{process_call} and start by defining it on the \dev{}. \\
+
+Intuitively \rust{process_call} would be a higher-order function. Specifically, instead of calling the \dev{} directly, \rust{poll} would return the functions \rust{transmit} or \rust{send} including the necessary arguments. The device would then be called with \dev{.process_call(fn, [args])}. However higher-order functions are not a viable solution here. This is for two reasons. Firstly we envision to send the functions to be called by \rust{process_call} from one component to the other. But function references are, with some exceptions, not serializable and sendable in distributed scenarios. Secondly we also need to pass the arguments for those called functions to \rust{process_call} so we would need to derive a common sum type to represent all possible function arguments.
+
+The solution to this is called defunctionalization. It is a known transformation used in compilers to transform higher-order functions \cite{reynolds1972definitional}. Instead of sending function references, a sum data type representing all possibly called functions is defined. In Rust we can use \rust{enum}s for this purpose. This \rust{enum} data type also allows us to integrate the arguments called per function so the \rust{enum DeviceCall} looks as follows for the sending loop: 
+\begin{minted}[fontsize=\footnotesize]{rust}
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum DeviceCall{
+    Transmit,
+    Consume(Instant, Vec<u8>),
 }
-\caption{Transformation of the packet sending control flow to achieve state locality}
-\label{fig:TransformEgress}
-\end{figure}
+\end{minted}
 
+We merge control flow and data flow here so the return type will be the union of the return types of all functions that might be called, wrapped in the respective next step of execution. In case of the \dev{}, the next step of execution will be a the next part of the \rust{poll} function to be executed. Therefor we define \dev{.process_call} as follows:
+\begin{minted}[fontsize=\footnotesize]{rust}
+pub trait Device<'a> {
+    // ...
+    
+    fn process_call( &'a mut self, call: DeviceCall
+    ) -> InterfaceCall
+    {
+        match call {
+            DeviceCall::Transmit
+                => InterfaceCall::InnerDispatchLocal(self.transmit()),
+            DeviceCall::Consume(timestamp, packet)
+                => InterfaceCall::MatchSocketDispatchAfter(self.send(timestamp, packet)),
+    }
+}
+\end{minted}
 
-\subsubsection{Receiving a Packet}
+In principle, each \dev{.process_call} now returns a continuation in the \stack{}.\\
 
-Just like sending, receiving is triggered in the \rust{Interface::poll()} method. In the \rust{Interface.socket_ingress()} method, a while loop receives packages form the device as long as there is a next package available. The main aspects of \rust{Interface.socket_ingress()} are depicted in Figure~\ref{fig:socketIngressCode}, lengthy parts are abbreviated by \rust{/**/}comments describing their effects.
-Each packet is then 'unwrapped' from its protocol layers Ethernet and IP by the Inner Interface and redirected to the appropriate socket.  This may change the state of the Interface e.g. adding new sender IP addresses. The socket processes the package, again this is a state changing operation and returns a result that may contain an answer packet. If so, this packet is wrapped into an IP packet and Ethernet Frame by the Interface and forwarded to the device for sending. Otherwise, successful processing of a package just sets the \rust{processed_any} flag to let the calling application know that socket states have changed due to received packets.  
+For the \stack{}, the implementation of \rust{process_call} and the \rust{enum InterfaceCall} is slightly more involved. Contrary to its implementation on the \dev{}, the \stack{.process_call} method will need to call sub-sections of the the \stack{.poll} method. We will consider the simplified pseudocode version shown below for now, to illustrate the principles applied. In the code below, borders of basic blocks, i.e. points the control flow could jump to are marked and given names, because they are needed for the transformation. 
 
+\begin{minted}[fontsize=\footnotesize]{rust}
+impl Interface {
+    // 1st jump => InitSimplePoll
+    fn simple_poll(&mut self, sockets: &mut SocketSet, device: &mut Device) -> bool {
+        let mut something_changed = false;
+        let mut result: SmoltcpResult<()>;
+        // Jump here 2nd => StartSendLoop
+        for socket in sockets {
+            // Jump here 3rd => GetNextPacket
+            let next_packet = self.maybe_get_packet(socket);
+            if next_packet.is_ok() {
+                result = device.send(next_packet);
+                something_changed = result.is_ok();
+            } else {
+                result = next_packet.as_err()
+            }
+            // Jump here 3rd => HandleResult
+            self.handle_result(result)
+        }
+        something_changed
+    }
+}
+\end{minted}
+
+Now the transformation from \stack{.simple_poll} to \stack{.process_call} would proceed as follows. First the basic blocks are identified. From those blocks, a corresponding \rust{enum InterfaceCall} is defined representing each of them. If a block uses results from the \dev{}, this results are part of the constructor of its \rust{InterfaceCall} representation. For our simple example this would yield the following \rust{enum}:
+
+\begin{minted}[fontsize=\footnotesize]{rust}
+enum InterFaceCall<'a> {
+    InitSimplePoll(SocketSet<'a>),
+    StartSendLoop,
+    GetNextPacket,
+    HandleResult,
+}
+\end{minted}
+
+The \stack{.process_call} is again essentially a \rust{match} expression on the given call. The arms of the matches wrap the respective parts of \rust{simple_poll}. The next modification we need, is to augment every such arm with statements to restore the original environment of each block inside the match arm. We stored the variable state inside the state of the \stack{} as described before, in this trivial example we assume to set them directly as filed of the \stack{}. However the code in the branches might still use references to the variables and we need to respect rusts borrowing rules, so we can not generally replace any direct variable use \rust{f(x)} by \rust{f(self.x)}. So we add statements to get and set the stored variables in each block before the code and before each \rust{return} statement respectively. Finally we replace calls to the device by statements returning the respective \rust{DeviceCall} and jumps to other blocks by the corresponding call of \stack{.process_call(next_block_call)}. The actual return statement of \rust{simple_poll} remains unchanged. So the return type of this simplified \stack{.process_call} is \rust{Either<DeviceCall, bool>} and looks as follows. 
+
+\begin{minted}[fontsize=\footnotesize]{rust}
+    fn process_call(&mut self, call: InterFaceCall) -> Either<DeviceCall, bool> {
+        match call {
+            InterFaceCall::InitSimplePoll(sockets) => {
+                // set variables something_changes, result, sockets and index
+                return self.process_call(StartSendLoop)
+            },
+            InterFaceCall::StartSendLoop => {
+                // get socket and socket_index
+                if socket_index+1 < sockets.size() {
+                    let socket_index = socket_index+1;
+                    // set sockets and socket_index
+                    return self.process_call(GetNextPacket);
+                } else {
+                    // set sockets and socket_index
+                    return Either::Right(self.something_changed);
+                }
+            },
+            InterFaceCall::GetNextPacket => {
+                let next_packet = self.maybe_get_packet();
+                    if next_packet.is_ok() {
+                        return Either::Left(DeviceCall::Send(next_packet))
+                    } else {
+                        self.result = next_packet.as_err();
+                        return self.process_call(HandleResult)
+                    }
+            }
+            InterFaceCall::HandleResult => {
+                self.handle_result();
+                return self.process_call(StartSendLoop)
+            }
+        }
+    }
+\end{minted}
+
+The actual implementation of \stack{.process_call} is obviously more complex, but was build in the same transformation steps. 
+
+\todo[inline]{Find better title or reorder}
+\subsection{Refactoring Packet Receiving -- Completing the \rust{poll} loop}
+Just like sending, receiving is triggered in the \stack{.poll} method. The main aspects of \stack{.socket_ingress()} are depicted in Figure~\ref{fig:socketIngressCode}. In a while loop, the \stack{} tries to receive packets from the \dev{}. In this case packets are represented by a token pair. The receive token \rust{rx_token} contains a buffer holding the received packet, the send token \rust{tx_token} may be used to directly return an answer to the \dev{}. During initialization, the transport medium used by the \dev{} is saved in the \stack{}. By matching on the current transport medium the method to unwrap the outer most layer of the packet is determined, in this case \rust{process_ethernet(sockets, &frame)}. Using the reference to the sockets the function determines which socket the packet should be dispatched to. Next packet is processed by the socket and copied into its receive buffer. From there it can later be retrieved and passed to the \store{}. The socket may also produced a direct answer, for example as part of the TCP protocol. If so this answer is dispatched as discussed before for the sending loop using the \rust{tx_token} as a reference to the device. So in essence the \dev{} is used three times here. First time explicitly for receiving, the second and third time implicitly by accessing its receiving and sending buffer via the tokens.
 \begin{figure}[H]
     \centering
 \begin{minted}[fontsize=\small]{rust}
-fn socket_ingress(&mut self) -> bool {
-    /*get references to sockets, inner and device*/
-    
-    // try to receive a data buffer object (rx_token) 
-    // and a file handle to the device (tx_token)
+fn socket_ingress(&mut self, sockets:&mut SocketSet) -> bool {
+    // ... 
     while let Some((rx_token, tx_token)) = device.receive() {
-        // rx_token.consume applies the closure to the received data frame
         if let Err(err) = rx_token.consume(inner.now, |frame| match
             inner.caps.medium {
-                /* matching for different medium, but we only care for 
-                   Ethernet for now
-                */
-                // process_ethernet: remove protocol layers, direct package to socket
                 Medium::Ethernet => match inner.process_ethernet(sockets, &frame) {
                     Ok(response) => {
                         processed_any = true;
-                        // maybe socket answers directly with a packet
-                        // e.g. with an ACK 
                         if let Some(packet) = response {
-                            // package the packet in a frame and send
-                            if let Err(err) = inner.dispatch(tx_token, packet) {...}
+                            if let Err(err) = inner.dispatch(tx_token, packet) {/*log Send Error*/}
                         }
                         Ok(())
                     }
                 },
-                ...
-            }) {net_debug!("Failed to consume RX token: {}", err);}
+                /*handle  other Medium types*/
+            }) else {/*log Handling Error*/;
+            }
         processed_any
     }
 \end{minted}
@@ -264,124 +506,82 @@ fn socket_ingress(&mut self) -> bool {
     \label{fig:socketIngressCode}
 \end{figure}
 
-\todo[inline]{Describe While Loop: I can extend this to the appropriate 'while construct' by using the first case distinction as the while condition. What I still need to account for is the "processes any" flag. It can be transported along from TCP/IP to NIC to APP inside the NICCommand: MaybeSend() and the NICResult: Send().}
-\todo[inline]{Where are Errors handled? 
-\means All errors are caught and handled inside the loop i.e. it is sufficient to $OR$ the NICResult : Send() in every round. }
-\todo[inline]{Actually there is another if-split between TCP/IP deciding whether to loop again or to go to the NIC for sending.}
+Again we need to eliminate the use of common references between \stack{} and \dev{} and integrate the receiving control flow into the \rust{process_call} logic of both components. So we first eliminate the use of reference tokens. A packet can no longer be received via a reference to the \dev{}, hence we implement a new receiving method on the \dev{}. This new method \dev{.receive_token_free} first executes \dev{.receive}. Receiving might or might not succeed, so it needs to return an \rust{Option<Tokens>}. If token tuple is returned, an owned buffer is allocated and \rust{rx_token.consume} is called to copy the received data into that owned buffer. Instead of returning an \rust{rx_token} and a \rust{tx_token}, \dev{.receive_tokenfree} then returns the received data and simple result representing the \rust{tx_token} (i.e. \rust{Ok(())} or \rust{Error}). Consuming the \rust{rx_token} might return an error that needs to be logged in the original code, however this error can only occur during processing the \stack{} so \dev{.receive_tokenfree} does not need to additionally the result of consuming. 
+Inside \stack{.socket_ingress} the usage of the \rust{rx_token} can now be replaced by simply passing a reference to the token to \rust{inner.process_ethernet(sockets, &frame)}. If a response is returned, we use the same mechanism as in the sending loop before. A local token is passed to \stack{.inner.dispatch} and the \dev{.send} function is used to explicitly send this owned token buffer to the device.
 
-\begin{figure}[H]
-\centering
-\tabskip=0pt
-\valign{#\cr
-    \hbox{%
-    \begin{subfigure}{.3\textwidth}
-    \centering
-     \includegraphics[height=5cm]{figures/ingress_simple_original.png}
-     \caption{Original flow of a packet receiving call}
-     \label{subfig:ingressOrig}
-    \end{subfigure}%
-  }
-  \cr
-  \noalign{\hfill}
-    \hbox{%
-    \begin{subfigure}{.65\textwidth}
-    \centering
-    \includegraphics[height=5cm]{figures/ingress_simple_transformed.png}
-     \caption{Refactored control flow of the ingress function call. Figure~\ref{fig:messageEnums} shows the new data types used to annotate the arrows.}
-     \label{subfig:ingressTransf}
-    \end{subfigure}%
-  }
-  \vfill
-  \cr
+After this refactoring, the core control flow between the two components looks as follows:
+\begin{minted}[fontsize=\footnotesize]{rust}
+fn pseudo_ingress(&mut self, device: &mut Device) -> bool {
+    while let Some(packet, send_permission) = device.receive_tokenfree() {
+        let local_tx = /*init LocalToken*/;
+        match inner.caps.medium {
+            /*process &packet and local_tx as tokens before*/
+        }
+        if local_tx.len != 0 {
+            let packet = local_tx.take_buffer();
+            if let Err(e) = device.send(packet) {
+                /*log Send Error*/
+            }
+        }
+        
+    }
 }
-\caption{Transformation of the packet receiving control flow to achieve state locality}
-\label{fig:TransformIngress}
-\end{figure}
-
-
-\begin{figure}[H]
-    \centering
-\begin{minted}[fontsize=\small]{rust}
-enum NICResult {
-	Send(Result<T , Err>),
-	Received(Result<Data, Err>)
-} 
-
-enum ToOrFrom {
-	To(NICCommand),
-	From(NICResult)
-} 
-
-enum NICCommand {
-	Receive,
-	MaybeSend(Option<Package>)
-} 
 \end{minted}
-    \caption{Possible implementations for message formats among the components}
-    \label{fig:messageEnums}
-\end{figure}
 
+There are now two explicit, stateful usages of the \dev{} and we can apply the same procedure as with the \stack{.socket_egress} function, to integrate the basic blocks of \stack{.socket_ingress} into the \stack{stack.process_call} matching. The method itself is divided into three additional \rust{InterFaceCall}s i) \rust{InitIngress} to trigger the ingress call including the first receive call to the device, ii) \rust{ProcessIngress} handling either a received packet or ending ingress and iii) \rust{LoopIngress} logging the device result and calling the \dev{.receive} again. For the \dev{} we also needed to add two calls. One is obviously \rust{DeviceCall::Receive}. The second one is needed, because the call \rust{DeviceCall::Send}  is now used in two different control flow states of the \stack{}, once during egress and once during ingress. So we need a way to distinguish in the \stack{} if the control flow should continue in the egress or the ingress loop after a \dev{.send} call. There are at least three options to handle this, The first is to create a new \rust{DeviceCall}, the second is to save the current state in the \stack and add an additional dispatch based on this state, the third one is to make the current state another value in the data flow and have the device decide which \rust{InterfaceCall} to return after sending. We decided to use the third option and augmented the \rust{DeviceCall::Send(Packet)} with an additional parameter \rust{enum InterfaceState} being either \rust{Ingress} or \rust{Egress}. The device would now also pattern match on this parameter and return the next call to the \stack{} accordingly.
 
-\subsection{Transformations needed for Message Passing}
-\label{subsec:MessagePassing}
-As explained before the nodes of the DFG in the compiled program cannot access shared memory. So we need to extract the communication relations that rely on direct state acccess and transform them into message passing communication. For example, a server application (later application component), can directly create sockets (later network stack component), query their state and change it. \\
+Now there is one missing element in the basic loop. In Section~\ref{subsec:SocketHandling} it was described, that the socket handling, i.e. setting sockets to listening state, calling the receive function on the socket etc. had to be moved into the \stack{} code. To simplify previous explanations we ignored this so far. If we left the socket handling in scope, the main loop would be structured as shown below
 
+\begin{minted}[fontsize=\footnotesize]{rust}
+    let mut ip_stack_call = InitPoll;
+    loop {
+        let device_or_app_call = ip_stack.process_call(ip_stack_call);
+        if calls_dev(&device_or_app_call){
+            ip_stack_call = device.process_call(device_or_app_call);
+        } else {
+            let socket = sockets.get_mut(socket_handle);
+            /*first socket state handling */
+                let outbytes = store.handle_message(input);
+                socket.send_slice(outbytes);
+            /*second socket_state_handling 2*/
+        phy_wait(/*...*/);
+        }
+    }
+\end{minted}
+We can see that socket handling happens in two parts. One directly after the \stack{} returned from polling, the second after the \store{} is called. Therefore as socket handling was moved into the \stack{}, only one new \rust{InterfaceCall} was introduced. The first part of socket handling was directly attached to the match arm of the last \rust{InterfaceCall} during polling. Instead of only returning the polling result, the closure ending poll now also returns the request if the socket received one. The second part of socket handling was moved to a separate \rust{InterfaceCall}, capturing the result from the \store{}. This also meant, that waiting before the next poll i.e. the \rust{phy_wait} call now happens between two \stack{} calls and needs to change its position in the loop. In transforming \rust{phy_wait}, aspects had to be taken into account that have not been addressed so far. Therefore, this will be considered separately in the next section.
 
-How to
-\begin{enumerate}
-    \item Zugriffe identifizieren ... im Zweifel erstmal für unsere Beispielanwendung
-    \item Identifier für die Komponenten des Zustands (Sockets, inner interface, whatever) einführen, die serialisiert werden k\"onnen und eine gemeinsame Sprache der kommunizierenden Komponenten erm\"oglichen 
-    \item Aus allen identifizierten Interactionen ein Nachrichtenformat entwickeln um diese abzubilden \means einfachste Variante ist serialisierung der funktionsaufrufe
-    \item Das "Zustands-kapselungs-paradigma" erzwingt soweit ich das sehe eine zentrale "Schnittstelle" pro Komponente, die die eingehenden Nachrichten verarbeitet
-    \item Wenn ferig \means kann man das Vorgehen generalisieren/automatisieren
-\end{enumerate}
+\subsection{Integrating the \rust{phy_wait} Call}
+\todo[inline]{I need a better title for this section}
+Now we need to refactor the \rust{phy_wait} call. This function is basically a wrapper function to the system call \rust{libc::select}. It accepts a file pointer and a waiting  duration and halts the current thread until either the file becomes available or the waiting duration is exceeded. The file pointer is a pointer to the system file the device uses to write the packets to. The maximum waiting duration is determined by the \rust{ip_stack} based on the current state of sockets. We are facing two problems with this function. One is, that we need to integrate it into the refactored control flow. The second is, that it is using a system call and a file pointer. Both file access and system calls are operating system specific, and therefore may be implemented differently in m3 or any other target architecture. 
 
+Functionally, three things are realized in the \rust{phy_wait} call. Determines the maximum waiting time for the sockets is obviously a reading operation on the state of the \stack{} and should be integrated in \rust{ip_stack.process_call}. Determining the file pointer availability in a distributed setting needs to happen in the component that holds the pointer, so we will need another call to the device. Finally waiting is a system operation. The component that should wait is the interface. However we need to implement waiting in an m3 specific manner and therefor we either have to do it in the main scope, or we have to import the according m3 API into the \rust{interface} module. The clearly preferable option is to wait in the main scope over mixing component internal logic and runtime logic. So in essence wwe refactor the \rust{phy_wait} call to another loop between the \stack{}, the \dev{} and the main scope\\
 
-\note{Da die Sockets jetzt nicht mehr Teil des Interfaces sind gibt es mehrere grunds\"atzliche M\"oglichkeiten: 
+As waiting should always happen immediately after 'loading' the sockets with answers to their requests, we do not need to introduce another \rust{InterfaceCall}. We rewire the internal logic of \rust{ip_stack.process_call}. So far we just ignored waiting. After the sockets are loaded with messages from the store in \rust{ip_stack.process_call(AnswerToSocket(Vec<(SocketHandle, Vec<u8>)>)}, we would directly proceed calling \rust{self.process_call(InitPoll)} again. Now instead the waiting time for the sockets is calculated as it was in the main loop using the \rust{self.poll_delay()} function. Then the calculated duration is send to the device using a new \rust{DeviceCall}. \\
 
-Ich weiss noch nicht ob es eine automatische/generelle M\"oglichkeit der Ableitung gibt, aber das sieht aus wie Domain-Knowledge \means Programmers Responsibility
-}
-M\"oglichkeiten:
-\begin{itemize}
-    \item Man k\"onnte tats\"achlich die Sockets rumschicken, dh. das SocketSet als daten Betrachten 
-    \item Man k\"onnte eine vollst\"andige Representation der Sockets auf beiden Seiten haben
-    \item app hat eine vereinfachte Version der Sockets mit State und Commands \means wenn man es genau auf eine Anwendung zuschneiden will, k\"onnte man alle \rust{socket.is_something()} Zugriffe identifizieren, die muss der abgeflachte zustand beanworten k\"onnen, und alle \rust{socket.do_something()} Zugriffe identifizieren, die m\"ssen als commands vom Interface verstanden werden. \means Um das sauber zu unterscheidnen muss man den Code der Funktionen untersuchen. Ich weiss nicht ob die Unterscheidung m\"oglich und sinnvoll ist und selbst wenn, ob /wie man z.B. bedingte Zugriffe \rust{if !socket.is_open() {socket.listen(6969).unwrap();}} umsetzen würde. 
-\end{itemize}
+To process the new \rust{DeviceCall::NeedsPoll(Duration)}, we define a method \rust{needs_poll} on the device trait. \md implemented its network stack with smoltcp, but provides altered versions of the devices. Those devices provide the \rust{needs_poll} method to implement waiting in the main scope, so this refactoring mimics their behavior while allowing us to run our refactored smoltcp version also on standard Linux. The method accepts a duration and returns a boolean indicating if the device is available again. In the concrete implementations of the device trait we can again use \rust{phy_wait}, to maintain original behavior while we do not run on \md. \\
 
+Finally we need to alter the general control flow. Waiting has to happen in the main scope in \md. So after calling the \dev{} with \rust{DeviceCall::NeedsPoll}, the \stack{} should not be invoked directly as before but instead a waiting function is called, mimicking the behavior of \md waiting implementation. This means a call to the \dev{} can now either return a call to the \stack{} or an instruction to wait, containing the information \md will require for waiting. Consequently in the main scope a new case distinction is needed. If the \dev{} returned an \rust{InterfaceCall}, it is directly forwarded to the \stack{}, otherwise the waiting instruction is executed by a placeholder and and the \rust{InterfaceCall} to restart polling is generated. TO keep control flow simple in the main loop, this case distinction is wrapped in a function \rust{maybe_wait}, yielding a control flow as shown the pseudocode below
 
+\begin{minted}[fontsize=\footnotesize]{rust}
+    loop {
+        let device_or_app_call = ip_stack.process_call(iface_call);
+        if is_device_call(&device_or_app_call){
+            let iface_call_or_wait = device.process_call(device_or_app_call);
+            iface_call = maybe_wait(call)
+        } else {
+            // call the store to answer messages
+        }
+    }
+\end{minted}
 
+\section{Adaptations in Ohua}
 
-\textbf{Steps for App-Interface:}
-1. The most complex interaction (if not the only one) we need to tackle is the one between the app and the tcp\_ip\_stack. In the new smoltcp implementation, the sockets are a separate entity although they are logically a part of the tcp\_ip\_stack obviously. The app needs to be able to set up and identify sockets to manage connections, map requests and answers and so on. The interface needs the sockets to process incoming and outgoing packets based on their internal state.   
-
-
-
-
-\subsection{Can we generalize?}
-Observations
-\begin{itemize}
-    \item Which components should the program have? \means Could not be deduced from Code \means Domain knowledge of the programmer
-    \item How to implement message passing? \means I currently suspect this is also a matter of domain knowledge 
-    \item How to transform to linear state usage \means Firstly wee need to know the components. Second we'd need to follow their states in the code. However this probably entails knowing a) which encapsulated object (e.g. socket) belongs to the component and which one doesn't. Assuming the composed states are defined by the programmer we can follow their fields though function calls. We would assume correct code AND no keyword args as in Python so we can follow object using their position in a function call even if they're named differently inside the function \means we need to track aliasing \means this works as long as we can follow all calls i.e. no function calls to outside compile scope takes our objects as arguments \means I have to evaluate against our restrictions if referencing can get our objects can get in our way.
-\end{itemize}
-
-
-\subsection{other stuff}
-\todo[inline]{Rewrite with examples}
-\begin{itemize}
-    \item Panics \means Errors are forwarded, meaning we can react on them in distributed settings, \rust{panic!} can in the M3 scenario at most be detected by the node sending to the panic node because M3 will notify a sender when the receiver is closed. In this scenario, the usual message path through the graph is obviously broken so the only way to propagate this would be an extra channel each node has to the main thread.
-    \item currently only tuples of exactly 2 elements are supported \means either I adapt Ohua, or I need to introduce further wrapping for any more complex pattern
-    \item currently input to functions i.e. parameters can not directly be used as stateful objects \means I need to introduce wrapper function calls, I might remove them in the backend again.
-\end{itemize}
-
-\section{Adaptations to make Ohua fit for relevant applications}
-\subsection{Providing full type annotations}
 Although Rust is a strongly typed language, type annotations for local variables are often unnecessary, since they are automatically derived from the type inference of the rust compiler. In contrast, definitions of types, i.e. structs, enums and functions, are the basis of type inference and must be annotated manually/by the programmer. Since Ohua produces new code in the backend, it is not enough to transfer existing annotations of the input to the output. In particular, the communication channels of the produced tasks require type annotations, since these cannot be completely derived by the Rust type inference even in the shared memory scenario. Also in view of a later extension to fully distributed systems, distributed compilation of individual components or the use of languages with less powerful inference, it is important not to rely on the type inference specific to the compiled language. 
 
 So where do we get the type information we need? One important observation is that Ohua does not create new types. The control functions Ohua inserts into the data flow graph are mainly there to pass on existing intermediate results of the original program. That is, the types of these functions that is, of their input and output channels can be derived from the input code. For this we need a) a type extraction from the input program and b) a type propagation which propagates the corresponding types through the representation of the data flow graph. Both were basically available at the beginning of the work. However, the existing implementation had problems or was not fully functional. This means that some types had to be annotated by hand in the output code. The following sections describe how type extraction and type propagation worked and which changes were necessary to achieve the desired functionality. \\
 
-\subsubsection{Type Extraction}
-So the first functionality we had to address was the \code{Type Extraction} in the frontend integration. Until now this was a two step process. In a first pass two kinds of data were extracted from the input module. One was the algorithms i.e. the Rust functions that were to be compiled. Those were translated to an internal representation of the supported Rust subset as described in Section~\ref{subsec:RustIntegration}. The second structure kept track of imports defined in the module. \\
+\subsection{Type Extraction}
+So the first functionality we had to address was the \code{Type Extraction} in the frontend integration. Until now this was a two step process. In a first pass two kinds of data were extracted from the input module. One was the algorithms i.e. the Rust functions that were to be compiled. Those were translated to an internal representation of the supported Rust subset as described in Section~\ref{subec:OhuaPipeline}. The second structure kept track of imports defined in the module. \\
 
 The second pass was needed to annotate types to function names. As each function call \rust{let z = someFun(x, y);} might become an independent node, the compiler needs type annotations for \rust{x} and \rust{y} to later annotate the channels for sending those variables among independent tasks. To do so first the function names called in the parsed algorithms were extracted. Then all files defined in the imports where scanned for function definitions. From this information, a hashmap was built over all function names and the extracted function types. Finally, in a further traversal over the input code, this hashmap was used to lookup function types and annotate them in the input code. This procedure had some disadvantages, namely : 
 
@@ -411,7 +611,7 @@ So for most syntax constructs, we can derive the type information needed from th
     \centering
      \begin{minted}[fontsize=\footnotesize]{rust}
 fn test(i:i32) ->  {
-    let s = State::new_state();
+    let s = State::new();
     for e in range_from(i) {
         let r = h(e);
         s.some_method(r);
@@ -428,7 +628,7 @@ fn test(i:i32) ->  {
     \centering
     \begin{minted}[escapeinside=||,fontsize=\footnotesize]{haskell}
 fn test(i:i32) -> () {
-    let s:State = State::new_state();
+    let s:State = State::new();
     for e in range_from(i) {
         let e1:i32 = e;
         let r:i32 = h(e1);
@@ -458,7 +658,7 @@ Now, whenever a function call is converted, the function type is derived from it
 \todo[inline]{Check where the below comments belong}
 \note{Finally there are some open question we need to address regarding accepted types. Currently the type extraction mechanism just wraps any relevant type annotation from the input code in a to an internal argument type representation. This means, we do not distinguish the actual Rust types and do not filter for references, pointer or trait objects. The goal is of course to develop Ohua and the programming model for Rust to the point where a valid sequential input program never leads to an invalid output program, i.e. we want to achieve soundness. For this we need to evaluate if and how the type system of Rust has to be restricted in the input. And so we need to decide whether to leave this to the programmer, because it depends for example on the chosen backend or if there have to be additional mechanisms in the compiler to enforce these restrictions. We might also need to extend the programming model by necessary augmentation on the original program, like additional trait bounds. For example, an automatic annotation with \rust{[\#derive]} could be generated to add traits, e.g. for serialization, that were not necessary in the serial program. We will consider those question in the further development of Ohua and in particular the Rust integration.}
 
-\subsubsection{Type Propagation}
+\subsection{Type Propagation}
 The second aspect arises in the core compiler. When Ohua generates a Data Flow Graph, it introduces control functions e.g. to guard branching or collect results of a loop (see \ref{} for further details). Some of those functions are only present in intermediate representations because node fusion implemented downstream in the compiler may integrate them into bigger nodes. Some however occur as separate tasks in the final program. In particular for the later kind, proper type annotations are essential but it is sensible to provide them for any such function if possible, to reduce the assumptions among the steps of compilation. Also the transformation of code to SSA form introduces new variable names that need to be typed.\\
 
 Control function by their nature do not introduce new types. So it is possible to infer most of their input and output types from the host-language types parsed in the frontend. The code example in Figure~\ref{fig:TypePropagationExample} shows a Rust function and its last representation in the compilers \code{DFLang} representation. Marked in $\mathbf{bold}$ we can see the functions Ohua introduced to control the dataflow in the final program. We can also see, that one of those functions, namely $\mathbf{smap}$ is not preceded by the namespace marker $\mathbf{ohua-lang/}$. This is because most of the control functions are currently not represented by own constructors of the function representation in \code{DFLang}. They are represented internally just the same as host-language function calls and only recognized in pattern matching upon their names. In contrast $\mathbf{smap}$ is already implemented as a separate constructor. 
@@ -471,14 +671,14 @@ Control function by their nature do not introduce new types. So it is possible t
     \begin{subfigure}{.35\textwidth}
     \centering
      \begin{minted}[fontsize=\footnotesize]{rust}
- fn test(i:i32) -> () {
-    let s:State = State::new_state();
-    for e in range_from(i) {
-      let e1:i32 = e;
-      let r:i32 = h(e1);
-      s.gs(r);
-    }
- }
+fn test(i:i32) -> () {
+  let s:State = State::new();
+  for e in range_from(i) {
+     let e1:i32 = e;
+     let r:i32 = h(e1);
+     s.gs(r);
+  }
+}
      \end{minted}
     \end{subfigure}%
   }
@@ -526,13 +726,9 @@ To fix this issue we have made two main changes. First, we have extracted the re
 
 One problem that has not been addressed in this work is that the control functions are not represented by separate constructors in the DFLang. This means that they can only be distinguished from normal Rust functions by their function name, which is error-prone and difficult to maintain. So in the future the control functions should at least be mapped in their own constructors. Also arguments with known type, like the first argument of the function \code{collect:: int -> A -> [A]} should optimally be enforced by the type system. 
 
+\subsection{Destructuring Higher Arity Tuples}
 
-\todo[inline]{Describe \textbf{SSA} problem and fix as soon as tests work}
-\todo[inline]{In case we do anything about the enforcement of the programming model, describe here. Maybe move the comment about adding tests hee also.}
-\subsection{Extending the supported Syntax}
-\todo[inline]{Not sure if this will remain/become s section. Maybe merge}
-\todo[inline]{would be cool if I got `while` transformation running}
-\textbf{Destructuring Tuples}: Destructuring of function output was limited to to flat tuples of two elements. As shown in the Example below, a function output consiting of more than two elements would have to be destructed in steps. This was obviously inconvenient, but more importantly, the added destruction step, as other function calls would have created a separate node in the derived DFG. This means that processes or threads were created for these unnecessary destructuring nodes, and the corresponding data was unnecessarily serialized and deserialized via these processes. In this smoltcp case study the problem is even more pronounced. Remember the goal is to not send the stateful components from one process to another at all. However the recursive loop of preparing, sending, receiving and processing data takes all three components as well as the data as arguments. So the limitation of destructuring would have required us to introduce destructuring steps in the input code and prevented state locality in the final graph. 
+Destructuring of function output was limited to to flat tuples of two elements. As shown in the Example below, a function output consisting of more than two elements would have to be destructed in steps. This was obviously inconvenient, but more importantly, the added destruction step, as other function calls would have created a separate node in the derived DFG. This means that processes or threads were created for these unnecessary destructuring nodes, and the corresponding data was unnecessarily serialized and deserialized via these processes. In this smoltcp case study the problem is even more pronounced. Remember the goal is to not send the stateful components from one process to another at all. However the recursive loop of preparing, sending, receiving and processing data takes all three components as well as the data as arguments. So the limitation of destructuring would have required us to introduce destructuring steps in the input code and prevented state locality in the final graph. 
 \begin{figure}[H]
 \centering
 \tabskip=0pt
@@ -560,342 +756,36 @@ One problem that has not been addressed in this work is that the control functio
   \cr
 }
 \caption{With destruction being limited to two elements, programmers needed workarounds as additional destruction steps to use function outputs of more that two variables}
-\label{fig:TypePropagationExample}
+\label{fig:DetructExample}
 \end{figure}
 
 Therefore we had to extend the support for tuples in three ways. 
 Firstly we made tuple destructuring representable in the backend language. In particular tuples where represented there as expressions \code{Tuple (e1, e2)}, where the expressions \code{e1} and \code{e2} where either literals or variables. Tuple indexing was implemented as dedicated expressions \code{First bnd} and \code{Second bnd}, where the binding \code{bnd} was the name of the indexed variable, e.g. \code{First "myList"} would be converted to \rust{myList[0]} in the Rust backend.\\
 
-Now we represent tuple expressions as lists of literals or variables \code{Tuple [Either Lit Var]} and indexing via the more general term \code{Indexing bnd num}, representing indexing of \code{bnd} at the natural number index \code{num}. \\
+Now tuple expressions are represented as lists of literals or variables \code{Tuple [Either Lit Var]} and indexing is represented via the more general term \code{Indexing bnd num}, representing indexing of \code{bnd} at the natural number index \code{num}. \\
 
-\todo[inline]{Sebastians tuple type propagation fix. Was? Warum? Wie?}
+\section{Learnings from Rewriting}
 
+The restructuring of smoltcp was done in several phases and on the basis of the concrete example code. In order to find out which of these phases could be realized in Ohua in the future, we look here again at the steps required for this and the necessary knowledge to be able to take these steps. 
 
-
-
-
-\subsection{Not yet supported Rust Features}
-
-\todo[inline]{Chekout Rust AST lowering in the rustc repo}
-\subsubsection{Error Handling} 
-There are different ways of handling errors in Rust that come with different difficulties for us. The actually troublesome cases are those who result in either a panic, or an early return. 
-    \begin{enumerate}
-        \item matching \rust{Ok} or \rust{Err} \means We will have to handle matching in general, so this is a separate task
-        \item handling with combinators as \rust{and_then},  \rust{or}, \rust{or_else} \means some of them just act as monadic functions i.e. they only produce a \rust{Some} from \rust{Some} and a \rust{None} from a \rust{None}. Others can result in early return e.g. \rust{or_err()} and we need to handle this.
-        \item Rust uses the \rust{?} symbol as syntactic sugar for what is effectively a try-catch block in other languages \means This is something we need a separate handling for. In particular we need to evaluate if it can be translated into simpler language constructs. This will require more effort if it occurs in sub-scopes of the function block (e.g. inside loops or branches) as it is effectively a return from the function and we do not allow return statements other than at the end of a function. Another culprit is, that it's not just used for Result but also for Option (and maybe others). So effectively it is an early return in the failure case, but we need to deduce what exactly is early returned. 
-        \item \rust{unwrap()} \means will panic if called on the 'failure' side of \rust{Option} or \rust{Result}, so this is a matter of 'panic propagation', rather than of error handling
-        \item \rust{try!()} \means this is the old version of the \rust{?} operator, so if we find a way to handle the former, we can handle the later in a simpler way because \rust{try!()} is only used for \rust{Result<T, Err>}
-        \item \rust{expect("msg")} will early return and error with the specified message \means we need to handle early return here as well
-    \end{enumerate}
-    
-Options to handle this: 
-General question is, how do we handle \rust{panic}. As long as a program runs in a single process i.e. pre-compilation a \rust{panic} anywhere during execution will shut down the whole program. This is usually not the case in distributed scenarios as in microkernels, so we need to introduce a way to communicate failure among the separated components and to handle it appropriately.
-\todo[inline]{What does M$^3$ do if one of the tiles/one process produces an error? }
-
-So how can we handle the \rust{?}?
-
-Example 1. for outermost function scope:
-\begin{minted}[fontsize=\small]{rust}
-fn example() -> Result<T,E> {
-    let x = might_error()?;
-    // do something with x here
-}
-\end{minted}
-
-\begin{minted}[fontsize=\small]{rust}
-fn example() -> Result<T, E> {
-    if let Ok(x) = might_error() {
-        // do something with x here
-    } else {
-        // otherwise we'd return the result of the function call
-        // to preserve the exact error type
-        might_error() 
-    }   
-}
-\end{minted}
-$\Rightarrow$ To do this, we need to know the type of \rust{might_error}, because the \rust{?} could also indicate an \rust{Option<T>} that we'd need to handle with  \rust{if let Ok(x) = might_error()}. The problem with this is, that there might be aliases for the Result or Option types so we can not in general know, what the type of \rust{might_error} unless we have all the necessary definitions and aliasing in scope.\\
-
-\bigskip
-
-\subsubsection{Match Expressions}
-Although it is slightly counter intuitive as Ohuas Frontend Language is functional and functional languages are notorious for pattern matching, there is no syntax for Rusts \code{match} expressions in Ohuas frontend language. So currently we either need to transform it into more basic constructs i.e. i-t-e, or encapsulate it in a library function. \\
-
-\begin{figure}[H]
-\centering
-\tabskip=0pt
-\valign{#\cr
-    \hbox{%
-    \begin{subfigure}{.45\textwidth}
-    \centering
-     \begin{minted}[fontsize=\small]{rust}
-// matching in a function
-let x = match some_call() {
-    pattern1 => something
-    pattern2 => something_else
-    _ => default_thing
-} 
-     \end{minted}
-     \caption{Example for matching in pseudocode}
-     \label{matching}
-    \end{subfigure}%
-  }
-  \cr
-  \noalign{\hfill}
-    \hbox{%
-    \begin{subfigure}{.45\textwidth}
-    \centering
-    \begin{minted}[fontsize=\small]{rust}
- // replaced function code 
- let (x, *variables used after match*)  = 
-    match_fun(*variables from scope used in the match*);
- //----------------
- // In a new separate library
- fn match_fun() {
-    use lib::some_call;
-   
-    match some_call() {
-        pattern1 => something
-        pattern2 => something_else
-        _ => default_thing
-   }        
- }  
-    \end{minted}
-     \caption{Pseudocode for compilation result}
-     \label{matchInLib}
-    \end{subfigure}%
-  }
-  \vfill
-  \cr
-}
-\caption{Match moved to a library function}
-\label{fig:MatchHandling}
-\end{figure}
-
-However this approach is not as trivial as it looks at first glance. It requires knowledge about the enclosed variables from the surrounding scope and encapsulation also changes the semantics of returning values or errors.. Branches returning by a no-semicolon statement need to be rewritten to use \rust{return}, branches with explicit \rust{return}, \rust{unwrap} or \rust{?} must lead to conditional returns in the outer/original scope of the match.\\
-
- \todo[inline]{Instead we can see match expression as what they really are ... each pattern actually is a function from the matches value to bool, repeated matches are if match1 else if match2 else if .... So we can a) turn each match into a bool function(see below) and then transform the whole thing to nested if-else.}
-
- 
- \todo[inline]{Actually more efficient and also much cooler than nesting if else is supporting multi-case switch directly. by turning our 'branching-switches' from a ((0/1), (True/False)) system to a (num\_cases, num) semantic.  
- This also happens basically when the rust compiler lowers either if-else or matches (see ref below). If we have an enumerated switch, the more efficent way to transfom the match is to have one match function, that return the index of the matched expression. We could encapsulate it in a library but due to import/visibility issues concerning the patterns it would actually be niver to have a way to encapsulate code 'in place' i.e. Ohua treads it as a function, but at least in the backend it's just inlined again.}
-\href{https://rustc-dev-guide.rust-lang.org/mir/construction.html#lowering-expressions-into-the-desired-mir}{rustc docu}
-
-\question{Can we rely on Rusts type inference here? i.e. 
-If, in the original code \code{x} did not have a type annotation, does this mean that the type of \code{match\_fun()}can also be derived?}
-
-\begin{figure}[H]
-\centering
-\tabskip=0pt
-\valign{#\cr
-    \hbox{%
-    \begin{subfigure}{.45\textwidth}
-    \centering
-     \begin{minted}[fontsize=\small]{rust}
-let x = match some_call(arg) {
-    pattern1 => A,
-    pattern2 => B,
-    pattern3 => C
-} 
-     \end{minted}
-    \end{subfigure}%
-  }
-  \cr
-  \noalign{\hfill}
-    \hbox{%
-    \begin{subfigure}{.45\textwidth}
-    \centering
-    \begin{minted}[fontsize=\small]{rust}
-let wrapped_match = 
-    || match some_call(arg) {
-        pattern1 => 0,
-        pattern2 => 1,
-        pattern3 => 2
-    } 
-let index = wrapped_match;
-let mut x;
-if index=0 {
-    A
-} else if index = 1 {
-    B
-}...
-    \end{minted}
-    \end{subfigure}%
-  }
-  \vfill
-  \cr
-}
-\caption{Rewrite pattern matches to enumerated cases}
-\label{fig:MatchHandling2}
-\end{figure}
-\bigskip
-
-Further notes:
-\begin{itemize}
-    \item inside the arms, there can be \rust{panic!}, \rust{return}, \rust{break} or other kinds of early return. So even if we encapsulate, we need to parse the match to exclude this.
-    \item arms of a match expression are expressions. This means it is always possible to assign a match to some value, even if the match was not a right-hand-side in the first place.
-    \item the problem with encapsulating matches is, that the arms (can) act on states i.e. we'd have to scan the arms for used states from outer scope 
-    \item IF the match was not an assignments right-hand AND we excluded early returns the only sensible function of that match is to manipulate stateful objects. This means, encapsulating does not make sense for such cases because the encapsulating function would take stateful things as arguments and use them as states. Maybe we can handle this by having the encapsulating function return all the (potentially) manipulated states.
-    \item[] $\Rightarrow$ We have to do the same 'exclude early return \means collect used states \means make them arguments and return values \means transform' for while loops
-\end{itemize}
-
-\subsubsection{Structs and Impl Functions}
-Currently we do not compile \rust{impl} functions as algorithms. The question is, could we and in how far are they sematically different from 'pure algorithms'. From the outside, a method is one stateful operation on the objects it is called on. However the method it self is composed of stateful and stateless operations just like any other function. The only difference is the first argument, which is always the state itself in case of methods. 
-\note{The Rust borrow checker enforces linear state use in loops and is generally a good touchstone for the feasibility and effects of code transformations for Ohua. As seen in the transformation of smoltcp code, there is actually no difference in terms of memory access conflicts to the state, whether method code is encapsulated in the method or inlined in another algorithm. Also field visibility is not an issue as long as we only operate in a single scope.
-IFF this holds, what we would need to implement in Ohua is basically a replacement pass, that upon inlining a method, replaces the stateful calls to 'self' by the original object name.}
-
-
-\todo[inline]{Example using SSA and state threading replacement ... is this sufficient?}
-Further considerations:
-\begin{itemize}    
-    \item Do we need serialization for all of them? How to do this in Rust?
-    \item Do we need to preserve the original API in any scenario? If we rewrite structs to tuples for example, calling applications will crash.
-\end{itemize}
-
-\subsubsection{While Loops}
-\label{subsubsec:WhileLoops}
-A very common pattern of server applications is to run in an endless loop. As neither \code{loop} nor \code{while} expressions are supported by the given Ohua implementation, we want/need to add them. 
-
-The frontend language of Ohua is purely functional and hence does not entail while loops. The functional equivalent of a while loop is a recursive function, with the following case distinction: If the condition of the while loop is true, the inner code will be executed and a recursive call is made, otherwise the function returns. After every run of the original loop, local bindings go out of scope and only variables that lived outside the loop 'survive' to the next iteration. In the recursion this is equivalent to using all variables from the outer scope as arguments to the recursive call and return them when the recursion ends. This is illustrated in Figure~\ref{fig:WhileTransform} which shows a simple \code{while} loop in Rust and a functional equivalent using recursion. 
-
-\begin{figure}[H]
-\centering
-\tabskip=0pt
-\valign{#\cr
-    \hbox{%
-    \begin{subfigure}{.45\textwidth}
-    \centering
-     \begin{minted}[fontsize=\small]{rust}
-fn algo() {
-  let mut i:i32 = 0;
-  let mut stateObj:State = State::new();
-  while check(i) {
-    let local = use(i);
-    stateObj.mutate_with(local);
-    i = i + 1
-  }
-  stateObj
-}
-     \end{minted}
-    \end{subfigure}%
-  }
-  \cr
-  \noalign{\hfill}
-    \hbox{%
-    \begin{subfigure}{.45\textwidth}
-    \centering
-    \begin{minted}[fontsize=\small]{rust}
-
-fn algo() {
-  let mut i:i32 = 0;
-  let mut stateObj:State = State::new();
-  (i , stateObj) = rec_while(i, stateObj)
-  stateObj
-}
-
-fn rec_while(i:i32, state:State) 
-  -> (i32, State) {
-  if check(i){
-    let local = use(i);
-    state.mutate_with(local);
-    i = i + 1;
-    rec_while(i, state)
-  } else {
-    (i, state)
-  }
-}
-
-    \end{minted}
-    \end{subfigure}%
-  }
-  \vfill
-  \cr
-}
-\caption{To express a While-Loop in the purely functional Ohua frontend language, we can rewrite it to a recursive function}
-\label{fig:WhileTransform}
-\end{figure}
-
-How to:
-\begin{itemize}
-    \item We note that 
-    \begin{enumerate}
-        \item want that transformation to be valid/suitable for all language integrations
-        \item If we did it at the specific language level, we would have to introduce a new, recursive function, which is complicated from inside processing a function. However one of the first level of transformations inside Ohua is inlinening algorithms as \code{let} definitions  
-    \end{enumerate}
-    \item So we augment Ohuas Frontend Language with a \code{While condition body} expression, where \code{condition} and \code{body} are the respective components of the original while-loop transformed to expressions of the frontend language.
-\end{itemize}
-
-\section{The M3x Backend}
-\begin{itemize}
-    \item we use one tile for the prototype
-    \item we use 'gates' for communication
-    \item \todo[inline]{Exact description of gates (e.g. capacities, how do they match our expected data format). If we tried to realize the communication between application and interface as one structure containing a) package payloads and b) commands we might run into capacity problems with the gates}
-    \item \todo[inline]{How do we realize credit passing. (How) does it influence performance}
-\end{itemize}
-
-\textbf{Important Note}: We do NOT compile from one operating system to another. M$^3$ already runs a slightly adapted version of smoltcp as its network stack. Further it supports all necessary system interfaces and libraries smoltcp requires, in particular M$^3$ offers the required libc calls to connect the application to system sockets and on the other hand smoltcp does not require the rust standard library, which M$^3$ currently does not support. 
-
-In general though different OSes provide different abstractions for OS services. The compilation, as is, takes care of this as far as it concerns i) the abstraction of processes, their creation and communication and ii) the control flow and shared memory usage among/of compiled components. However, this does not account for all necessary adaptations in cross compiling because it is restricted to the compile scope and some specific interactions with the OS. \\
-\bigskip
-
-What does this mean?:\\
-Whenever the program to be compiled accesses OS services e.g. allocates memory, binds a system level socket etc., those accesses might become invalid for the compiled application running in the target OS.\\
-\bigskip
-
-What to do?:\\
-If we want to account for this in the future we need to:
+We faced several problems along the way. Concretely we needed to 
 \begin{enumerate}
-    \item extend the backend transformation to scan for relevant function calls and replace them
-    \item do this for all components of the compiled software i.e. not only inside the compile scope but actually for all library files and dependencies that are not already part of the target OS infrastructure
-    .  
-    \item \todo[inline]{There might be dragons}
-    \item FlexOS \todo[inline]{Check Cubicle} handle this problem by providing the programmer a) with a fixed set of supported libraries they can use and b) annotations for system calls, such as memory allocation the compiler can use to automatically replace system call approppriately for the target system
-    \item \means most likely supporting this will rely on information from the programmer (e.g. also, when we compile something for the cloud and for example memory allocation or file opening in a task must be adapted to the respective cloud API)
+    \item encapsulate code in components and define the new interfaces of those components
+    \item lift stateful component use into scope
+    \item make states composable, and control flow among them unidirectional
+    \item adapt the code to the system interface of \md
 \end{enumerate}
 
+\textbf{1. Identifying components and defining their Interaction: } The interaction between the \stack{} and the \dev{} where clearly defined. However for the interaction between the \stack{} and the \store{} we had to make decisions on which of the processing steps in scope should be assorted to which component. In Section~\ref{subsec:SocketHandling}, we discussed several options and their dependency on code structure. In conclusion, identifying components, defining their interaction and encapsulating code accordingly is not a decision that can be made automatically by our compiler. In particular if we only have static information, we can not predict the size and usage frequency of components at runtime to make sensible decisions on effective communication interfaces. Also the compiler cannot infer what security implications components have. At the moment, the compiler determines what a stateful component is based on the input syntax alone. If the compiler should encapsulate components other than the set of stateful variables used in the compile scope, it will need another source of information, e.g. special annotations given by the programmer.
 
-\section{Learnings/Abstract description}
-In this section, we consider the concrete changes to smoltcp in the abstract. We try to derive general patterns from the concrete changes how we can transform general imperative code in such a way that stateful objects become composable nodes of a dataflow graph. 
+\textbf{2. How can state usage be lifted into Scope? :} The basis for the control flow refactorings conducted in this work, was making all stateful calls to components i) visible to the transformations and ii) explicit. We began refactoring by inlining function call to lift \dev{} calls into scope. Inlining pure functions is already done in Ohua and requires those functions to comply with the programming model. So the first takeaway is, that if the compiler shall be able to inline code automatically, the programmer either already needs to know which code this is going to be or has to comply with the programming model in all of the code. This is not trivial, as some aspects of the model can not be automatically enforced and might be pretty subtle. Inlining stateful functions is currently not done in Ohua, meaning that methods can not be treated as algorithms. In the transformations we also only inlined e.g. calls to the \rust{socket} as an intermediate step and re-encapsulated parts of the inlined method again. Given that we aim to compile isolated components, the inlining of methods will probably become no topic. To implement the transformations from this work in the compiler it would be necessary instead to be able to transform methods without inlining them into algorithms. The actual lifting can be done, by returning the control flow to the main scope.
 
-In the case of smoltcp, the previously defined goal was to create a distributed application from three components, the 'server application' itself, the network stack, and the device abstraction. In addition, it was known which parts of smoltcp belonged to which of these components.
+When it comes to making state usage explicit, the transformation process can be fairly involved. To transform the implicit usage of \dev{} via tokens, required an understanding of the reference usage, the effects each part of the processing would have on the components and in conclusion the reference-free separation of processing in the \stack{} from processing in the \dev{}. So this steps could not have been derived from syntactic information. Consequently we must require all state usages to be explicit in the first place.
 
-\todo[inline]{How to get to the starting states}
-\begin{itemize}
-    \item we need initial knowledge i.e. compiler doesn't know/ can not infer
-    \item at the lowest possible level programmer would just say sockets + interface = component
-    \item in that case the transformations include
-    \begin{itemize}
-        \item form a common object (struct in this case) with fields for each inner component \rust{struct NWComponent {interface: Interface, sockets: Sockets}}, this is already tricky as we need to know how to form this and how many of each subcomponent would be there and how to address them
-        \item accessing the inner components directly must not be possible any more \means generate wrapper functions for each call to inner components \means \rust{interface.poll()} becomes \rust{nw_component.poll()} where the later calls the former as  \rust{self.interface.poll()}
-        \item \question{How to derive "addressing" when there's more than one of each subcomponent}
-    \end{itemize}
-\end{itemize}
+{3. How can we make state use linear? :} After lifting all usages of the \dev{} as explicit calls into the \stack{.poll}, we essentially just needed to move calls to the \dev{} into the outer loop and merge them into a common call. The key insight here was, that it requires a) a dispatch method \rust{process_call} representing the \emph{only} outer interface of each component b) a serializable representation of the control flow point each call to this method should be dispatched to and c) in case control flow points where originally only parts of methods a mechanism to decompose such method into addressable syntax constructs.
+For the \dev{} the definition of \rust{process_call} was straight forward. Due to the previous transformations, the control flow points where exiting method calls with explicit arguments. Those method calls, including their arguments where represented by an \rust{enum} and \rust{process_call} would dispatch the call to the concretely method by pattern matching. The return type of \dev{.process_call} is the corresponding representation \rust{enum} on the \stack{}. For the \stack{} we had to decompose the \rust{poll} method into callable code blocks. This required a form of lambda-lifting of those blocks. Contrary to lambda-lifting in pure functions, we did not turn all enclosed variables into arguments. Instead we made variables that are not send to other components part of the state, to retrieve and set them before and after each block. Regardless if variables where send or stored between method calls, they needed to be free of internal stack references. So, although the resulting \rust{process_call} will not be compiled to data flow, we will likely have to extend the programming model assumption to the code to be transformed that way. In particular we will need to require all variables that will be stored to be owned and all variables that will be send to implement the required serialization.
+A concept that is structurally very similar to the refactorings made here is the transformation into continuation passing style. Therefore we will deal next with it whether and under which conditions we can develop automatic transformations for Ohua from it.
 
+{4. Can we automatically adapt code to different operating systems?: } The short answer is no, not in general. System call APIs are syntactically mostly indistinguishable from normal function calls. Ohuas backend integration can adapt the generated DFG to exiting isolation mechanisms, because the compiler itself introduced the abstractions for nodes and channels and can map them to the according architecture. It can not identify system accesses, like file system access or network access in the input code. A possible remedy was to provide some kind of annotation, that can be used by the specif architecture integration. However, as the example of \rust{phy_wait} demonstrated, the concrete a API of a target architecture also influences the general structure of the input code. The most likely solution is that the programmer needs to use the API and available libraries of the target architecture already in the input program. 
 
-For the following considerations, we assume that S1, S2 and S3 are stateful objects in the input language that should form the components of the target program. We now look at different possible control flows in which these components occur and describe which transformations are necessary to compile the resulting control flow to a data flow graph with local states. 
-
-Patterns to describe:
-\begin{enumerate}
-    \item\label{transf:mergeAdj} Composable State Nodes have exactly one 'entry' and 'exit', so \rust{let a: i32 = S1.do(x:i32); let b: i32 = S1.make(y:String)} 
-    becomes \rust{let (a, b): (i32, i32) = S1.do_make(x:i32, y:String);} with \rust{fn do_make(&mut self, x:i32, y:String)-> (i32, i32) {let a = self.do(x); let b = self.make(y); (a,b)}}. This is sensitive to order i.e. \rust{make_do()} is another function. This can easily blow up since were talking about ordered powersets of multisets e.g. \rust{make_do_do_make()}
-    \item\label{transf:pullUp} States or references to States must not be arguments to functions or methods outside the compile scope. For pure functions this means inline code in the compile scope and proceed. Actually for stateful calls \rust{let a = S1.do(S2); } it means the same in the first step, thereby replacing all \rust{self} references by \rust{S1}, in a second step we actually return to step~\ref{transf:mergeAdj}. This is how \rust{dispatch_before} and \rust{dispatch_after} originated in principle.
-    \item state is used two times in a loop \means merge the functions as described in Step~\ref{transf:mergeAdj}
-    \item\label{transf:remRefs} We can't pass references in a distributed scenario \means \rust{let pat = fun(&S1, args)} becomes  \rust{let (pat, S1) = fun(S1, args)}, all arguments have to be `moved` in rust parlance and rebound at function return. 
-    \todo[inline]{This doesn't work in loops. Why? Describe \rust{Option<S1>} workaround.}
-    \item States are used alternately: If we have \rust{S1.act(); S2.do_something(); S1.again()} we needed to a) conserve the state \rust{S1} while \rust{S2} is called, which is not how DFGs work and b) have two nodes for \rust{S1} doing something and send \rust{S1} around which contradicts the state-or-data separation/state locality. So what we need to, as shown in egress and ingress, do a recursion on the 'outer' state call, i.e. first of all we transform to \rust{if entry {S1.act(); S2.do_something(); recur(S1, S2, entry=false)} else { S1.again()}}. Obviously we still have to merge the two functions \rust{S1.act()} and \rust{S1.again()} but this time the resulting arguments and return values must be sum, not product types of the merged function. 
-    \todo[inline]{ALL of this sounds like completely solved category theory composition}
-    \item Closures and recursion: It would be nice if we could implement the transformation described above as closures because this saves us the problem of identifying required Trait bounds and lifetime. However, recursive closures are tricky, because closures are stack allocated and stack+recursion is not a good combination. So we need to use functions. 
-    \question{Can we generally derive trait bounds and lifetimes for those functions?}
-    \note{I think so, at least it worked for poll}
-    \question{ Can we circumvent using inner functions?}
-    \note{Nope. inner functions need trait bounds and lifetimes as well}
-    
-\end{enumerate}
-
-Considerations - not yet sorted or finished
-\begin{itemize}
-    \item Scope \means What is the compile scope? How do we 'bring methods/functions' into scope? Where would we e.g. generate wrapper functions? How do we handle visibility (public/private)? We don't want to enforce the Rust subset all over the library, so to pull things into scope we'd need to support full Rust and transform based on Rust AST \means wouldn't be general to all supported languages.
-    \item Early Returns \means What has to happen to inline Code with early returns?\means looks like it first becomes a nested 'if', but what's next?    
-\end{itemize}
-
-
-\todo[inline]{Describe link to original, closure based smoltcp architecture and implications for memory efficiency and heap-freeness}
+A problem that still remains is the initialization of states. For reasons of code efficiency and code size, we do not want to restrict the states to a certain size or to the use of serializable data types. Yet each state has to be initialized, before it can be called. This means there will be a function returning the state and a stateful use of it which the compiler will initially distribute to separate nodes connected by a channel that sends the state. To solve this problem we could for example identify the two nodes and fuse them to a single node in the backend processing. This requires all states to be initialized by independent functions. Another possibility is to implement wrapper types for each state. Those would hold the actual state as an \rust{Option} field, or an equivalent representation in other languages. It would also implement the \rust{process_call} method, mostly dispatching calls to its wrapped state. The \rust{process_call} implementation of the wrapper would however additionally implement a call to initialize the inner state. Evaluating those and potential other solutions will be part of the future work.

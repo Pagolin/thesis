@@ -1,36 +1,13 @@
 \documentclass{scrartcl}
 \usepackage{amsmath}
-\usepackage{listings}
 \usepackage{hyperref}
 \usepackage{color}
 \usepackage{todonotes}
 \usepackage{pdfpages}
 \usepackage{subcaption}
-
-\definecolor{codegreen}{rgb}{0,0.6,0}
-\definecolor{codegray}{rgb}{0.5,0.5,0.5}
-\definecolor{codepurple}{rgb}{0.58,0,0.82}
-\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
-
-\lstdefinestyle{mystyle}{
-    backgroundcolor=\color{backcolour},   
-    commentstyle=\color{codegreen},
-    keywordstyle=\color{magenta},
-    numberstyle=\tiny\color{codegray},
-    stringstyle=\color{codepurple},
-    basicstyle=\footnotesize,
-    breakatwhitespace=false,         
-    breaklines=true,                 
-    captionpos=b,                    
-    keepspaces=true,                 
-    numbers=left,                    
-    numbersep=5pt,                  
-    showspaces=false,                
-    showstringspaces=false,
-    showtabs=false,                  
-    tabsize=2
-}
-\lstset{style=mystyle}
+\usepackage{minted}
+\newcommand{\question}[1]{\todo[inline, color=blue!40]{#1}}
+\newcommand{\note}[1]{\todo[inline, color=yellow!40]{#1}}
 \newcommand{\means}{$\rightarrow{}$}
 
 \begin{document}
@@ -111,7 +88,6 @@ Use in general explanation and reasoning
 \begin{itemize}
     \item domain knowledge of the programmer is expressed by choosing the scope and explicitly composing things she wants to be components later
     \item also actually the software already has to be written in message-passing style at least as long as we don't implement conversion of function calls to message formats
-    
 \end{itemize}
 \begin{itemize}
     \item Do benchmarks give us a hint how startup of unikernels performs compared to VMs and FaaS functions ?
@@ -131,4 +107,45 @@ Use in general explanation and reasoning
     \item Designing Systems: One argument for microkernels Carsten mentions (and actually it really follows from the principle) is, that they enforce compartmentalization i.e. make the programmers structure their application from independent components and have only explicit communication relations (no sharing things). How do we think about this argument in our approach. Clearly, composition is the way to structure things in our approach, but do we enforce the same strictness of isolation and more over ...
     \item What if libraries (i.e. code we don't look at) entail function calls and shared data among later separated components?
 \end{itemize}
+
+\section{Remaining notes on Rust}
+\note{Note to myself: Allocation only refers to heap memory}
+\note{Say something about deref coercion? Probably not }
+\textbf{Closures}: Closures are used in smotcp quite a lot so its important to understand how this influences state sharing and control flow in the original architecture.
+\begin{itemize}
+    \item if not explicitly annotated, the closure will derive if captured objects are mut/immut borrowed or moved 
+\end{itemize}
+\begin{minted}{rust}
+let obj1 = OBJ1::new();
+let closure1 = |arg| {let x =obj1.do_stuff(arg);
+                      x*2}
+// closure1 is moved to use_closure, 
+// while obj2 gets a mutable reference to obj1
+obj2.use_closure(closure1);
+\end{minted}
+
+
+Features of Rust that might become relevant for implementation
+\begin{itemize}
+    \item Type Inference: Rusts type inference is based on standard Hindley-Milner (HM) type inference algorithm\footnote{Full description can be found in \href{https://rustc-dev-guide.rust-lang.org/about-this-guide.html}{the Guide to Rustc Development}}. To resolve trait bounds a Unification algorithm similar to the algorithm used in Prolog to solve logical constraints\footnote{The Trait Bound Unification is implemented in the \href{https://rust-lang.github.io/chalk/book/}{Chalk} library}.
+    \todo[inline]{If needed and time allows check (reasons for) limitations and give details on extensions}
+    \item Generic Types: To allow the use of generic types with basically no runtime overhead, Rust uses so called \textit{monomorphization} at compile time. This process infers concrete typing for any use of generically typed elements, like functions, structs or enums. The concretely typed instances of elements are then inlined to the existing code. It is in fact one of the last steps on a Rust IR before the code is lowered to LLVM IR and passed to LLVM for code generation and enables LLVM to infer some lower level optimizations (city rustc guide again? ).
+    \item Serialization: There is a crate \href{https://doc.rust-lang.org/nightly/nightly-rustc/rustc_serialize/index.html}{serialize}, that as described in the 
+\end{itemize}
+
+\todo[inline]{Tail recursion support is limited in Rust, meaning the compiler is able to derive tail call elimination in simple cases but is not guaranteed to do so.}
+\subsection{Fragments left for reuse/disposal}
+%In fact, there are two main aspects that need to be considered. The first is, that we need to present the compiler our target components and their basic interaction as stateful objects in the compile scope. It must be recognizable for the compiler, what the stateful components of the program are and how they interact. In particular, we must not as smoltcp currently does, give the device as a parameter to the TCP/IP component and let the later use the device 'under the hood', i.e. inside the library and outside the compile scope. The second aspect is, that all communication between components must be done explicitly via serializable messages, not via access to shared memory as before.
+
+%The first, and most trivial change is encapsulating initialization into \rust{init_<component>()} functions. This also entails encapsulating the sockets and the interface from the original code into one component.
+%\todo[inline]{refactor example and add description when I know how I handle the socket handles}
+
+%Second we notice that each of our components is used only once in our target program. The function \rust{poll} that contains the interaction of  TCP/IP stack and the device to receive and send messages must become a pure function, i.e. taking both the TCP/IP stack and the device as arguments. We must lift it into compile scope and refactor the  usage of both components in the function to also follow our programming model. To enable this linear usage of states, we obviously need to transform the way those stateful components work in smoltcp. In Section~\ref{subsec:StateThreading} we further illustrate the problem and explain how to approach it.
+
+%Thirdly we see, that the communication between the components does not happen through mutual access to states anymore. For example, instead of accessing a socket directly via \rust{let socket = sockets.get_mut::<tcp::Socket>(tcp_handle);} we need to implement a data format and a command interface in both the \rust{app} component and the \rust{tcp_ip_stack} to enable such interactions via message passing. We discuss this issue in Section~\ref{subsec:MessagePassing} and present our implementation as a possible solution.
+
+%Finally we have to use a recursion instead of a \rust{while} loop. This is a current restriction of Ohua which we discuss in more detail in Section~\ref{subsubsec:WhileLoops}. 
+%\note{Note to me: Ohua also supports 'endless' for loops. However we have no way of gracefully ending them as we a) can not access the loop generator while running and b) we do not support early returns i.e. \rust{break} or \rust{return}}
+%\todo[inline]{figure out recursion}
+
 \end{document}

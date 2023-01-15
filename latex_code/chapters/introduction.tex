@@ -1,4 +1,25 @@
-\section{Why we're here}
+Structure:
+\begin{itemize}
+    \item[State of things]
+    \item two large trends \means distribution + heterogeneity vs need for security+safety+verification 
+    \item this starts at the OS level, i.e. distribute processes among cpus, compute on cpu/gpu/special purpose HW (e.g. signal processing in mobiles)
+    \item[Problem with that]
+    \item On the one hand, distribution facilitates isolation \means good
+    \item On the other hand, distribution comes with concurrency and increased complexity of programming (incl. new layer of abstraction) and they are the "natural enemy" of verification
+    \item another issue, in particular when systems need to be secure is the adaptation overhead to new execution scenarios
+    \item[Approache so far]
+    \item we can see the struggle is real 
+    \item cite approaches to verfiy OSes
+    \item cite e.g. Model Checking for Distributed Sytems 
+    \item[Our approach]
+    \item verify the sequential, local code \means have verified transformations applied \means get a verified distributed program
+    \item classical sceanrio on OS level is a NW stack. It connects user App to the outside wordl, uses different system services and in particular (nw) device drivers which is relevant because device drivers are notorious for bugs
+    \item \emph{what does ohua do so far}
+    \item \emph{what did we do with smoltcp and why is interesting}
+    \item \emph{what did we show}
+\end{itemize}
+
+\todo[inline]{Can I get e reference to Compositionality papers .. It woudl be awesome if we could get the link to \means "we transform a verified object into a verified category, i.e. composable, verified objects"}
 
 Actual Problem description
 \begin{itemize}

@@ -1,1 +1,120 @@
-\section{Odds and Ends}
+\section{Rust Language Integration}
+\label{sec:RustIntegration}
+
+\begin{table}[H]
+    \resizebox{\columnwidth}{!}{%
+    \begin{tabular}{l c l l}
+        \multicolumn{4}{l}{\emph{Block of Statements:}}\\
+        $block$ & $::=$ & \textbf{\{}$s;~\ldots ;~s $\textbf{\}} & statements \\
+        \multicolumn{4}{l}{\emph{Statements:} }\\
+        $s$ & $::=$ & $ e $ & statement returning a value\\
+        & $|$ & $ e $\textbf{;} & statement not returning a value\\
+        & $|$ & \textbf{let} $pat$ \textbf{=} $e$ & local definition\\ 
+        
+        \multicolumn{4}{l}{\emph{Expressions:}}\\
+        $e$ & $::=$ & $x$ & variable bindings \\
+        & $|$ & $\textbf{1},\textbf{2},\textbf{3}, \ldots \ |\ \textbf{true}\ |\ \textbf{false}\ $  & literals \\
+        & $|$ & $e$ \textbf{(}$e, \ldots , e$\textbf{)} & function calls \\
+        & $|$ & $e$ $callRef$ \textbf{(}$e, \ldots , e$\textbf{)} & method calls \\
+        & $|$ & $\textbf{(} e,~\ldots ,~e \textbf{)}\ $ & tuples\\
+        & $|$ & $e\ +\ e\ |\ e\ -\ e \ |\ e\ > \ e\ |\ e\ == \ e\ |\ \ldots $ & binary operations \\
+        & $|$ & $ -e\ |\ !e\ |\ *e\ $ & unary operations\\
+        & $|$ &\textbf{if} $e$ $block$ \textbf{else} $e$& conditional with optional else branch \\
+        % & $|$ & \textbf{while} $\ e$  $block$ & \\ % actually while loops are not supported at all
+        & $|$ & \textbf{for} $pat$ \textbf{in} $e$ $block$ & \\ 
+        & $|$ & \textbf{move} $\textbf{| } arg,~\ldots ,~arg \textbf{ |}\ e$ & closure\\
+        &$|$& $block$ & block expression, i.e. block returning a value\\
+        \multicolumn{4}{l}{\emph{Call References:}}\\
+        $callRef $ & $::=$ & $ z\textbf{.}y\textbf{.}x$ $[gernericArg]$  & namespaced binding  \\
+        \multicolumn{4}{l}{\emph{Patterns:}}\\
+        $pat$ & $::=$ & $x\ |\ (x,~\ldots ,~x)|\ \_ $ & bindings, tuples or wild cards \\
+    \end{tabular}%
+    }
+    \caption{Subset of Rust grammar, that is accepted by the Rust integration frontend}
+    \label{AppTab:FESubset}
+\end{table}
+
+
+\section{Additional Source Code Excerpts}
+
+\begin{figure}[H]
+\centering
+\begin{minted}[fontsize=\tiny]{rust}
+pub fn poll<'a, D>(
+    mut ip_stack: Interface<'a>,
+    timestamp: Instant,
+    mut device: D,
+    mut sockets: SocketSet<'static>)
+    -> ( Result<bool>, Interface<'a>, D, SocketSet<'a>)
+    where D: for<'d> Device<'d>
+{
+
+    ip_stack.set_inner_now(timestamp);
+    // .. fragment handling
+
+    let mut readiness_has_changed = false;
+
+    loop {
+        let processed_any = ip_stack.socket_ingress(device, sockets);
+        // Begin of inlined ip_stack.socket_egress()
+
+        let mut emitted_any = false;
+
+        for item  in sockets.items_mut() {
+            if ip_stack.item_meta_egress_permitted(item)
+            {
+                let mut neighbor_addr = None;
+                let result:Result<()>;
+                let packet_or_ok =
+                    // socket function wrapped to happen inside the ip_stack
+                    // component
+                    ip_stack.match_socket_dispatch_before(item);
+                if is_packet(&packet_or_ok) {
+                    let (response, response_and_keepalive) =
+                        from_packet(packet_or_ok);
+                    neighbor_addr = as_optn_addr(&response);
+                    let sending_token = device.transmit();
+                    if sending_token.is_some() {
+                        let local_dispatch_result = ip_stack.inner_dispatch_local(response, None);
+                      if let Ok((packet, timest)) = local_dispatch_result{
+                            let send_result =
+                                device.consume_token(timest, packet, sending_token.unwrap());
+                            if send_result.is_ok() {
+                                // socket function wrapped to happen inside // the ip_stack component
+                                result = 
+                                ip_stack.match_socket_dispatch_after(item, response_and_keepalive);
+                                emitted_any = true;
+                            } else {
+                                result = send_result
+                            }
+                        } else {
+                            result = Err(local_dispatch_result.unwrap_err());
+                        }
+                    } else {
+                        net_debug!("failed to transmit IP: {}", Error::Exhausted);
+                        result = Err(Error::Exhausted);
+                    }
+                } else {
+                    result = Ok(());
+                }
+
+                let maybe_break = ip_stack.handle_result(result, item, neighbor_addr);
+                if maybe_break {
+                    break
+                    }
+                }
+            }
+            // End of inlined ip_stack.socket_egress()
+
+        if processed_any || emitted_any {
+            readiness_has_changed = true;
+        } else {
+            break;
+        }
+    }
+    (Ok(readiness_has_changed), ip_stack, device, sockets)
+}
+\end{minted}
+\caption{After inlining all functions using the \dev{} and re-encapsulating all code that concerns only the \stack{} we get an interleaved usage of \stack{} and \dev{} in the sending loop. Due to multiple mutable borrows of both components in the loop, this code will not compile.}
+\label{appFig:egressInlinedOriginal}
+\end{figure}

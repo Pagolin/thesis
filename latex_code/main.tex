@@ -17,6 +17,10 @@
 \newcommand{\means}{$\rightarrow{}$}
 \newcommand{\code}[1]{\textcolor{gray}{$\mathsf{#1}$}}
 \newcommand{\rust}[1]{\mintinline{rust}{#1}}
+\newcommand{\dev}[1]{\rust{device#1}}
+\newcommand{\stack}[1]{\rust{ip_stack#1}}
+\newcommand{\store}[1]{\rust{store#1}}
+\newcommand{\md}[0]{M$^3$}
 
 \author{Lisza Zeidler}
 \title{Bricks of a Network Stack}
@@ -58,13 +62,13 @@
 %\input{chapters/benchmarks}
 
 %\chapter{Related Work}
-%\label{Chapter:Related}
+\label{Chapter:Related}
 %\input{chapters/relatedwork}
 
 
-%\chapter{Conclusion}
+\chapter{Conclusion}
 \label{Chapter:Discussion}
-%\input{chapters/conclusion}
+\input{chapters/conclusion}
 
 \appendix
 \chapter{Appendix}
