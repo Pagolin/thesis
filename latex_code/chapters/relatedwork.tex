@@ -111,6 +111,15 @@ The aim of FlexOS~\cite{lefeuvre2021flexos} is to provide an easy way to exchang
     \item one important distinction between our model and their application scenario is, that we do not assume the control flow to spontaneously divert e.g. by a client adding a second 'device' analogously to a second session tab in a browser. I'm not sure if/how that influences difference in our solution.
 \end{itemize}
 
+\textbf{Continuations from Generalized Stack Inspection}
+\begin{itemize}
+    \item a problem not addressed in CPS is the preservation of the run-time stack for "decomposed" functions
+    \item there are languages like Scheme, that provide first-class continuations (i.e. they can be entirely send around) but most languages (in particular those running on VMs) do not provide means to programmatically save and reinstate the run-time stack. 
+    \item One Solution was to move the run-time stack to the heap (there's just a sourceforge link in the bibliography :-( ), which is effectively what we did.
+    \item The authors use a mechanism called \emph{continuation marks}. They are a form of stack inspection, enabling the programmer to attach values to the control flow stack and set marks, indexed by keys to the stack to later retrieve those values. In a first step they transform a Scheme program into this representation, in the second they use the marks to derive defunctionalization
+    \item \means Not sure but this looks like deciding to integrate intermediate values into the data flow, while we decided to make them part of the local heap of stateful objects.
+\end{itemize}
+
 
 \textbf{Cooperative Task Management without Manual Stack Management
 or, Event-driven Programming is Not the Opposite of Threaded Programming}~\cite{adya2002cooperative}
@@ -131,6 +140,31 @@ or, Event-driven Programming is Not the Opposite of Threaded Programming}~\cite{
     \item the rest of the paper explains how both types of stack management can be/are used together using cooperative scheduling in Windows (using threads and fibers respectively)
 \end{itemize}
 
+\textbf{Defunctionalized Interpreters for Programming Languages}~\cite{danvy2008defunctionalized}
+\begin{itemize}
+    \item loooots to unpack in this paper
+    \item it build up on the works of Reynolds, Hutton, Kahn and many, many others in trying to complete a transformation relation among existing abstractions for computation. 
+    \item the concrete transformation considered in the paper is that from \textbf{structural operational semantics} (including interruptions and errors) to \textbf{reduction semantics} using i) transformation to \textbf{continuation passing style} and ii) defunctionalization. 
+    \item they integrate their results with previous work yielding the transformation based equivalence graph shown below (i.e. demonstrated inter-derivable representations)
+    \item Given those results we can explore and maybe better describe in future what our transformations should be e.g. we could end up with defining stateful objects as abstract machines within the DFG (wild guessing )
+\end{itemize}
+
+\begin{figure}[H]
+   \includegraphics[width=\textwidth]{figures/transformations_danvy.png}
+\caption{Graph representing the inter-derivability relation of different abstract models for computation, taken from Danvy~\cite{danvy2008defunctionalized}}
+\label{fig:transformationsDanvy}
+\end{figure}
+
+\textbf{Refunctionalization at work}\cite{DANVY2009534}
+\begin{itemize}
+    \item in this paper, Danvy and Millikin present \textbf{Refunctionalization} the left inverse of Defunctionalization. 
+    \item THis might be interesting for us, because this transformation as an intermediate step enables the transformations of programs that can not directly be fully defunctionalized. 
+    \item As the authors notice "A program can fail to be in the image of defunctionalization if there are multiple points of consumption for elements of a data type or if the single point of consumption is not in a separate function.". This might be the case if we consider the transformation of \rust{poll}. 
+    \item the two steps of deriving a common \rust{apply} function are called \emph{Disentangling} and \emph{Merging apply functions}.
+    \item We should consider whether this helps us to formalize and generalize the transformations made in this work.
+\end{itemize}
+\todo[inline]{ I don't know where to put this so I don't forget, Danvys Dr.Sc. Thesis is titled "An Analytical Approach to Programs as Data Objects". Given the chapter titles I think its quite interesting and might be a good start to get the background for transformations}
+
 Paper Stack Notes - Just for me now
 \begin{itemize}
     \item Language-Agnostic Optimization and Parallelization for Interpreted Languages \means interesting is, that they don't use the language itself but analze (static+dynamic) traces from the respective interpreters (with all problems that implies as having to separate interpreter introduced flow/dependencies from code flow/dependencies), they derive (or propose to do so) parallelity on the LLVM IR level
@@ -140,6 +174,39 @@ Paper Stack Notes - Just for me now
 Heterogeneous Embedded Multi-Core Systems \means paper from our chair (at east Jeronimo is on the author list), point is that compilers for MPSoC should except sequential code for the same reasons we bring forward, same time the backend has to distribute parallel tasks in a more coarse grained fashion than single-core compilers do (ILP) \means maybe, if we come to the conclusion that atuomatic extraction of components is possible and stateful components should be annotated, why not annotate them with target architecture directive \means anyway that's just a (faaaarrrr) outlook perspective
 \item DFGenTool: A Dataflow Graph Generation Tool for Coarse Grain Reconfigurable Architectures \means notes above
 \item Making State Explicit for Imperative Big Data Processing
+\item
+\end{itemize}
+
+
+Attempts to verify server-client programs (basically interaction of independent program components), some including stateful servers
+\begin{itemize}
+    \item "Towards reasoning for web applications: an operational semantics for Hop" 2010 \means defining small-step semantics for multi-tier programming language called Hop
+    \item 'A theory of RPC calculi for client-server model' 2019 \means RPC calculus is from Wadler, to reason about web interactions, this paper extends it by stateful servers  
 \end{itemize}
 
 \section{Automatic memory Isolation}
+
+\todo[inline]{Not sure if this belongs here but HAKC in particular the PhD thesis presents a technique to analyze function boundaries to isolate components \cite{mckee2022novel}, \cite{mckee2022preventing}. They also come to the rather obvious conclusion, that static analysis can not track pointers in general hence the do ...? to?}
+ \todo[inline]{There is a recent masters thesis\cite{ortega2022flexc}, that describes a mechanism called FlexC to automatically track/analyze data flow of a program and derive a policy model for HAKC deployment }
+
+
+ \textbf{PKRU-Safe: Automatically Locking Down the Heap
+Between Safe and Unsafe Languages}\cite{kirth2022pkru}
+\begin{itemize}
+    \item the identified problem is, that safe languages are already available and it should be possible to interact with unsafe language components without risking memory corruption
+    \item the concept is 
+    \begin{itemize}
+        \item to have the developer explicitly define the interface between trusted and untrusted parts of the code
+        \item use provided profiling input to dynamically identify when the untrusted component accesses data allocated by the trusted component
+        \item move such data into the untrusted component entirely 
+        \item enforce "semi-permable" restriction using MPKs 
+    \end{itemize}
+    \item Stack data is assumed to be protected by other mechanisms (Shadow Stack [14, 40])
+    \item they apply the concept to Servo, a layout-engine written in Rust. In the browser it interfaces with the JavaScript engine, written in unsafe C/C++ code.  
+\end{itemize}
+comparison
+\begin{itemize}
+    \item we will also need annotations for the components
+    \item in fact if we implement the dependency analysis and make data part of the state we will achieve a similar effect. However we need to rely on the programmer not to implicitly share references.
+    \item in how far data of one node is accessible to the other, depends on the backend and the programmers compliance to the programming model, not the compile process 
+\end{itemize}
