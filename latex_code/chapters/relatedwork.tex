@@ -32,21 +32,14 @@ The main adaptations the programmer is required to make are a) using Unikraft co
 
 The aim of FlexOS~\cite{lefeuvre2021flexos} is to provide an easy way to exchange isolation primitives for existing code without (extensive) rewrites. Like CubicleOS it is based on an adapted version of the Unikraft library system. The two main primitives the FlexOS API provides are \emph{abstract gates} and \emph{abstract shared data}. In order to compile code with FlexOS, the programmer must replace all function calls between components with \emph{abstract gate} definitions and all shared memory areas with \emph{abstract shared data} definitions. These adjustments have also been made in the adapted system libraries. In addition the FlexOS build system needs a configuration file, which defines among other things the isolation mechanism and the division of the components. During compilation, the abstract definitions are replaced by concrete mechanisms of the target memory isolation techniques, which are MPK, Software Guard Extensions (Intel SGX) and Extended Page Tables \cite{intel64and}. 
 
-\textbf{Comparison}
-\begin{itemize}
-    \item In our case, the programmer will also have to specify what the 'components' are. So far, this happens implicitly, through the structure of the code. If we ever get to the point where we actively change them, we will need markers in the code or configuration files. 
-    \item Basically, we also wrap function calls in runtime primitives for process communication. So in principle it is conceivable to have an architecture that also ensures memory isolation for processes. 
-    \item We do not have a predefined API to distinguish whether data is sent or shared between processes. Depending on the target architecture, the programmer can use reference types to avoid actually copying data and thus reduce memory overhead. For a shared memory backend in Rust this would be for example \rust{Arc<>} or \rust{RefCell<>}. However, the variables are passed through the same communication channels regardless of whether they are passed by reference or by value.
-    \item \todo[inline]{So is there a semantic reference? In the end its the programmer deciding what to do based on available methods of the architecture?}
-    \item Could we use Cubicle as an architecture? Probably not because when a programmer wants to share things by reference she can do so by hiding it from us essentially. So we have no clue in the backend when/how/if to use \emph{windows}. Also using them in encapsulated, out of scope functions makes no sense, because this essentially means sending the large things we only want to share by reference somewhere by value before sharing it  by reference ... So this probably also answers the prev. question.
-    \item One main difference to FlexOS and CubicleOS is, that they provide suitable implementations for system access calls. We do not do this. So in FlexOS and CubicleOS, the programmer needs to use the provided libraries for access to the kernel, devices or HW, in our case the programmer needs to do the same but she needs to chose them on her own and might need to adapt this choice depending on the target architecture.
-\end{itemize}
+
+In comparison to our approach, FlexOS and CubileOS solve a very similar problem with very similar constraints for the programmer. She has to define components and their communication explicitly and the adaptation to a concrete architecture is only possible through compilation, because she has to select from suitable system calls and libraries in the input already. In contrary to those systems, we do not provide an API to explicitly allow data sharing via references. It is possible to use reference sharing in Ohuas input programs, as only explicit reference passing is excluded. However Ohua will tread arguments passed by reference the same way as arguments passed by value. So if the resulting program is functional and if pass-by-reference is any more efficient than pass-by-value depends on the target architecture. Which also means we could not effectively use FlexOS or CubileOS as backend integrations.
 
 
+\section{Compiling stateful imperative Programs to Data Flow}
 
-\section{Compiling stateful imperative to Data Flow}
-"Making State Explicit for Imperative Big Data Processing
-"~\cite{fernandez2014making}:
+
+"Making State Explicit for Imperative Big Data Processing"~\cite{fernandez2014making}:
 \begin{itemize}
     \item identified problem: support arbitrary (Java) state in BigData (with high scalability) and recover state upon failure
     \item approach: infer dataflow and 'types of state access' to derive a 'stateful dataflow graph'(SDG)
@@ -167,14 +160,10 @@ or, Event-driven Programming is Not the Opposite of Threaded Programming}~\cite{
 
 Paper Stack Notes - Just for me now
 \begin{itemize}
-    \item Language-Agnostic Optimization and Parallelization for Interpreted Languages \means interesting is, that they don't use the language itself but analze (static+dynamic) traces from the respective interpreters (with all problems that implies as having to separate interpreter introduced flow/dependencies from code flow/dependencies), they derive (or propose to do so) parallelity on the LLVM IR level
+    \item Language-Agnostic Optimization and Parallelization for Interpreted Languages \means interesting is, that they don't use the language itself but analyze (static+dynamic) traces from the respective interpreters (with all problems that implies as having to separate interpreter introduced flow/dependencies from code flow/dependencies), they derive (or propose to do so) parallelity on the LLVM IR level
     \item Definitional Interpreters for Higher-Order Programming Languages \means very interesting for basic ideas (and wtf is GEDANKEN? Is it an actual language?), but for now to far off
-    \item "Automatic Extraction of Coarse-Grained Data Flow Threads from Imperative Programs" \means notes above
     \item Software Compilation Techniques for
 Heterogeneous Embedded Multi-Core Systems \means paper from our chair (at east Jeronimo is on the author list), point is that compilers for MPSoC should except sequential code for the same reasons we bring forward, same time the backend has to distribute parallel tasks in a more coarse grained fashion than single-core compilers do (ILP) \means maybe, if we come to the conclusion that atuomatic extraction of components is possible and stateful components should be annotated, why not annotate them with target architecture directive \means anyway that's just a (faaaarrrr) outlook perspective
-\item DFGenTool: A Dataflow Graph Generation Tool for Coarse Grain Reconfigurable Architectures \means notes above
-\item Making State Explicit for Imperative Big Data Processing
-\item
 \end{itemize}
 
 
@@ -187,19 +176,31 @@ Attempts to verify server-client programs (basically interaction of independent 
 \section{Automatic memory Isolation}
 
 \todo[inline]{Not sure if this belongs here but HAKC in particular the PhD thesis presents a technique to analyze function boundaries to isolate components \cite{mckee2022novel}, \cite{mckee2022preventing}. They also come to the rather obvious conclusion, that static analysis can not track pointers in general hence the do ...? to?}
- \todo[inline]{There is a recent masters thesis\cite{ortega2022flexc}, that describes a mechanism called FlexC to automatically track/analyze data flow of a program and derive a policy model for HAKC deployment }
+
+ \textbf{HAKC}
+ \begin{itemize}
+     \item again the identified problem is lacking compartmentalization 
+     \item in particular the authors make this case for Loadable Kernel Modules (LKM) which are themselves not a part of the linux kernel (i.e. not essential and not loaded by the bootloader), but loaded and executed in kernel space. With many of them providing audio and media processing and drivers, they are a notorious entry point for system compromise exploiting local bugs.
+     \item HAKC provides an API to define componets and a hardware-baed runtime system to enforce in-kernel isolation of the defined components
+     \item 
+ \end{itemize}
+
+ \textbf{FlexC} 
+ \emph{Flex}ible \emph{C}ompilation is an approach to automatically generate the compartmentalization policies, that HAKC requires as interface definition in the Input code. The authors argue, that in particular in larger system hand-written annotations are error prone and might also lead to inefficient choices. Like HAKC itself, FlexC uses static information from the input code, to generate a data access graph from the input program. To account for indirect data access via pointers the analysis conservatively overestimates potential dependencies. Dynamic data i.e. test runs of the input code can additionally be provided to weighten the data dependencies by frequency of access and size of data. To start the derivation FlexC automatically assigns compilation units (in C usually one ore more files) as smallest entity of isolation. By defining the target number of compartments, the programmer can initialize a greedy fusion of nodes after the initial graph was build, generating a coarser compartmentalization. It is also possible to manipulate the graph using a GUI for FlexOS. The output of FlexC is then directly integrated to the compilation process using HAKC.
 
 
  \textbf{PKRU-Safe: Automatically Locking Down the Heap
 Between Safe and Unsafe Languages}\cite{kirth2022pkru}
 \begin{itemize}
     \item the identified problem is, that safe languages are already available and it should be possible to interact with unsafe language components without risking memory corruption
+    \item So the whole point is to enforce hierarchic/semi-permeable memory isolation between Rust code and unsafe languages.
     \item the concept is 
     \begin{itemize}
-        \item to have the developer explicitly define the interface between trusted and untrusted parts of the code
-        \item use provided profiling input to dynamically identify when the untrusted component accesses data allocated by the trusted component
-        \item move such data into the untrusted component entirely 
-        \item enforce "semi-permable" restriction using MPKs 
+        \item to have the developer explicitly define the interface between trusted and untrusted parts of the code, this is done via annotations in the projects build file and the untrusted libraries \means with per library annotations the adaptation overhead is significantly smaller than in annotating single functions or data access
+        \item To analyse the code and track heap allocations PKRU-Safe uses custom plugins to rustc and LLVM tooling. To identify the usage sites of heap allocated data the input program is run with provided profiling input to dynamically identify when the untrusted component accesses data allocated by the trusted component.
+        \item The gathered access data are used to categorize data allocation into unsafe and safe memory. At runtime this distinction is used to enforce the policy that unsafe code can never access safe memory.
+        \item To move such data into the untrusted component entirely and to handle the two memory pools at run time the \rust{liballoc} to augment it by dedicated primitives for unsafe memory allocation. The authors describe this runtime behavior as \emph{compartment-aware} heap allocation. 
+        \item By keeping heap section of safe and unsafe memory objects distinct, PKRU-Safe can implement the policies using MPK protection for the trusted heap section.
     \end{itemize}
     \item Stack data is assumed to be protected by other mechanisms (Shadow Stack [14, 40])
     \item they apply the concept to Servo, a layout-engine written in Rust. In the browser it interfaces with the JavaScript engine, written in unsafe C/C++ code.  
@@ -210,3 +211,31 @@ comparison
     \item in fact if we implement the dependency analysis and make data part of the state we will achieve a similar effect. However we need to rely on the programmer not to implicitly share references.
     \item in how far data of one node is accessible to the other, depends on the backend and the programmers compliance to the programming model, not the compile process 
 \end{itemize}
+
+
+\textbf{Spons \& Shields}
+\begin{itemize}
+    \item a technique based on Intel SGX TEEs (Trusted execution environments)
+    \item TEE are increasingly popular for secure cloud deployments and while they where initially used to encapsulate only specific critical user applications, they are now used to move whole OSes into a single secure environment e.g. into an Intel SXG enclave. 
+    \item The identified problem is, again that this creates large code spaces without internal access restrictions and possibly including insecure, third party libraries, which contradicts the defense in depth approach.
+    \item the next problem they notice is, that comparmentalization is often enforced along processes. But it is hard to redesign an application to encapsulate different concerns and security levels into different processes. Also the trust model of TEEs does not include the host, while process isolation techniques are based on the primitives the host OS and hardware (MMU) provide.
+    \item they have a similar scenario as we do using an application containing an NGNIX, a PostreSQL (with medical data), an SSL library for crypto and a businesss logic application in PHP.
+    \item The Spons\& Shields framework (SSF) described in the paper consists of an API to manage the two core abstractions \emph{Spons}, which encapsulate units of execution as POSIX processes or libraries and \emph{Shields} which define hierarchical memory access regions. The programmer needs to introduce \emph{Spons} and \emph{Shields} according to her requirements in the code and link against the musl standard C library. During compilation the framework will insert TEE primitives to enable the SSF runtime to enforce memory boundaries between the Spons.
+    \item similar to our example they use a server-database scenario to exemplify their case (NGIX, PostgreSQL)
+\end{itemize}
+Comparison 
+\begin{itemize}
+    \item bound to C
+    \item handwritten adaptations needed  
+    \item maybe a backend ?
+\end{itemize}
+
+
+
+\todo[inline]{ Check \cite{9973038}: Combined approach using HW protection techniques, compile time analysis, model checking, and compiler runtime measures for protection. Probably cites a lot of approaches.}
+
+\todo[inline]{ Abraham A Clements, Naif Saleh Almakhdhub, Saurabh Bagchi, and Mathias
+Payer. ACES: Automatic compartments for embedded systems. In 27th USENIX
+Security Symposium (USENIX Security 18), pages 65–82, Baltimore, MD, Au-
+gust 2018. USENIX Association.
+}
