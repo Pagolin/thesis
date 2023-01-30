@@ -1,43 +1,10 @@
-Contibutions (so far)
-\begin{itemize}
-    \item changed type extraction in rust
-    \item fixed SSA in Ohua
-    \item mechanism to wrap not yet supported code (still in the making)
-    \item extend tests in Ohua (now there's tests for variable name scoping, tests for programming model compliance in the making)
-    \item \todo[inline]{adapt smoltcp refactoring to new version}
-    \item \todo[inline]{refactor ingress and poll to compile with Ohua}
-    \item \todo[inline]{abstract and describe required code/control flow transformations}
-    \item \todo[inline]{maybe sketch an algorithm}
-\end{itemize}
+Isolating components of a kernel or larger programs from each other makes sense both for security reasons and for better scalability. But adapting existing code bases is time-consuming and complicates development and testing. This is also true, for example, when programs written for monolithic or unikernels have to be rewritten for microkernel-based systems like \md with isolated drivers and system components. The Ohua compiler tries to solve this problem by automatically identifying independent sections of a program and making them separate threads or processes, depending on the architecture chosen.\\
 
-\todo[inline]{Der Versuch das Program im Endeffekt auf m3 zu bringen zeigt ziemlich deutliche Schaechen des "entspannt testen, verteilt compilieren" Ansatzes. Da wir die system Aufrufe der Zielarchitektur nicht automatisch einfuegen koennen, muss das der Programmierer schon im Input tun. Im Fall von m3 liegts vielleicht an mir, aber für die meisten verteilten systeme luaft das doch wieder darauf hinaus, dass man den code auf dem System oder einer Simulation testen muss. }
+In this work we have looked at whether it is possible to compile programs with Ohua whose structure does not yet contain the desired independent components. Using the concrete example of a server application, we looked at which transformations are necessary to create a program in which the TCP/IP stack, the network interface and the user application are independent, stateful components. By means of a backend integration for the microkernel-based operating system \md, a program transformed in this way could be compiled directly from running on a uni- or monolithic kernel to running on a microkernel based OS. \\
 
-\todo[inline]{Comparing Ohua with other approaches for compartmentalization we have seen that many of them are less flexible since they directly build upon a single input language and compiler toolchain and particular hardware mechanisms. Identifying components and legal access among them is a problem mostly solved by programmer annotation APIs. While we currently only extract such information base on the actual syntax, it might be worthwhile to consider adding annotations to Ohuas API in future versions, to enable e.g. the automatic encapsulation of components or the use of different data transfer mechanisms.}
+To achieve this, the components must only be used once in the compiled program. The communication between them must be realized via the arguments of a single function call, and the control flow of the entire program must be adapted accordingly. As it turned out, part of this problem can be formally described by transformation to Continuation Passing Style and Defunctionalization, and could be further developed to transformations in Ohua. Other necessary steps are not possible without additional demands on the programmer. This includes, among other things, the identification of the target components if this is not apparent from the initial code structure. In general, lifting code into scope that was encapsulated in function or method calls is problematic because it is the programmer's responsibility to respect the constraints of the programming model, e.g. that function arguments need to be serializable for the selected backend. As the transformations that Ohua performs on the code become more complex, it may become more difficult for the programmer to know in which areas of the code to adhere to the programming model. \\
 
-\todo[inline]{Note on security: It is easier, to lambda lift every variable but from a security point of view it is more desirable to perform a dependency analysis and keep any data in the local state that is functionally not required by the called component. It might also be worthwhile to consider a less revealing way to store the states exectuion state. Instead of sending them it would be possible to encode it as a state machine. However, arguments need to be send anyways which a) necessitates a common data type for all possible argument type constellations and b) inevitably reveals part of the control flow state.}
-\todo[inline]{Abgleich mit der Aufgabenstellung:}
-From the task definition
-\begin{itemize}
-    \item Implement the cloud-unikernel using SmolTCP, a well-established networking library -> Also schlicht eine Beispielanwendung mit smoltcp, die Anfragen an einen Key-Value-Store handelt. 
-    \item Rewrite the unikernel, such that Ohua can compile it Derive and implement transformations to make state usage local to a single program location to provide isolation.
-    \item Update existing M3 Backend
-    \item Evaluate the approach in the (existing) setup of the YCSB key-value store benchmark along the performance-safety trade-off. 
-\end{itemize}
+Comparing Ohua with other approaches for compartmentalization we have seen that Ohua is more flexible since it is not directly build upon a single input language, compiler toolchain or particular hardware mechanism. However, as we have seen in the adaption to \md, we face the same problems when it comes to adaptations between different operating systems, namely that system calls can not be automatically identified from the syntax and replaced by Ohua. It might be worthwhile to consider adding annotations to Ohuas API in future versions, to enable e.g. the automatic encapsulation of components or the use of different data transfer mechanisms. Otherwise the input program already needs to use appropriate system calls and components, which contradicts the original idea of being able to develop the code independently of the target architecture. \\
 
-
-Discussion
-\begin{itemize}
-    \item M3 message semantic, and messaging in general:
-    \begin{itemize}
-        \item as M3 is sort of a distrib. system, constraints concerning message passing and potential of message loss becomes relevant compared to shared memory scenarios
-        \item if we develop architectures for distr. or even cloud systems, implementation of sending/receiving need to take care of message loss (which might mean another roundtrip) or message delivery semantics (e.g. it could be possible to select only-once, at-most-once etc) but that would obviously complicate the DFG-determism problem 
-        (comparison with the bag-label approach from ???(some paper i read on the ohua cloud stuff))
-        \item another issue is serialization, can it be assumed or automatically infered for all data send in a program?
-        \item also message sizes may be a problem. In M3 we would use indirection via the file system, for objects to large to send. Could we teach the compiler to decide when to use which mechanism?
-        \item to efficiently schedule an application with many "heavily communicating" activities, a \textbf{Gang schedule} mechanism can be used  by defining the 'gang' of an activity at creation time (?). \means could we infer this, e.g. for tasks in a loop
-    \end{itemize}
-\end{itemize}
-
-\todo[inline]{Describe link to original, closure based smoltcp architecture and implications for memory efficiency and heap-freeness}
-
+For further work, we therefore need to clearly distinguish which transformations we can and want to implement in Ohua, and which steps should be left to the programmer.  
 
