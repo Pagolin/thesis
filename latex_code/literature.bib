@@ -460,6 +460,45 @@ author = {Olivier Danvy and Kevin Millikin},
 keywords = {Defunctionalization, Refunctionalization, Abstract machines, Continuations, Continuation-passing style (CPS), Shunting-yard algorithm},
 }
 
+@inproceedings{10.1145/1086365.1086393,
+author = {Pettyjohn, Greg and Clements, John and Marshall, Joe and Krishnamurthi, Shriram and Felleisen, Matthias},
+title = {Continuations from Generalized Stack Inspection},
+year = {2005},
+isbn = {1595930647},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/1086365.1086393},
+doi = {10.1145/1086365.1086393},
+booktitle = {Proceedings of the Tenth ACM SIGPLAN International Conference on Functional Programming},
+pages = {216–227},
+numpages = {12},
+keywords = {continuation-passing style, continuations, web programming, stack inspection, A-normal form, defunctionalization, scheme},
+location = {Tallinn, Estonia},
+series = {ICFP '05}
+}
+
+
+@article{stackInspection,
+author = {Pettyjohn, Greg and Clements, John and Marshall, Joe and Krishnamurthi, Shriram and Felleisen, Matthias},
+title = {Continuations from Generalized Stack Inspection},
+year = {2005},
+issue_date = {September 2005},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+volume = {40},
+number = {9},
+issn = {0362-1340},
+url = {https://doi.org/10.1145/1090189.1086393},
+doi = {10.1145/1090189.1086393},
+journal = {SIGPLAN Not.},
+month = {sep},
+pages = {216–227},
+numpages = {12},
+keywords = {A-normal form, continuations, defunctionalization, web programming, scheme, continuation-passing style, stack inspection}
+}
+
+
+
 %------------------ Memory Isolation ---------------------
 @inproceedings{mckee2022preventing,
   title={Preventing Kernel Hacks with HAKC},
@@ -509,9 +548,9 @@ keywords = {Defunctionalization, Refunctionalization, Abstract machines, Continu
   year={2022}
 }
 
-@inproceedings{10.1145/3453933.3454024,
+@inproceedings{SponsAndShields,
 author = {Sartakov, Vasily A. and O'Keeffe, Daniel and Eyers, David and Vilanova, Llu\'{\i}s and Pietzuch, Peter},
-title = {Spons &amp; Shields: Practical Isolation for Trusted Execution},
+title = {Spons \& Shields: Practical Isolation for Trusted Execution},
 year = {2021},
 isbn = {9781450383943},
 publisher = {Association for Computing Machinery},
@@ -519,13 +558,47 @@ address = {New York, NY, USA},
 url = {https://doi.org/10.1145/3453933.3454024},
 doi = {10.1145/3453933.3454024},
 booktitle = {Proceedings of the 17th ACM SIGPLAN/SIGOPS International Conference on Virtual Execution Environments},
-pages = {186–200},
+pages = {186 -- 200},
 numpages = {15},
 keywords = {SGX, compartments, isolation, trusted execution},
 location = {Virtual, USA},
 series = {VEE 2021}
 }
 
+@article{pinto2019demystifying,
+  title={Demystifying arm trustzone: A comprehensive survey},
+  author={Pinto, Sandro and Santos, Nuno},
+  journal={ACM computing surveys (CSUR)},
+  volume={51},
+  number={6},
+  pages={1--36},
+  year={2019},
+  publisher={ACM New York, NY, USA}
+}
+
+@article{costan2016intel,
+  title={Intel SGX explained},
+  author={Costan, Victor and Devadas, Srinivas},
+  journal={Cryptology ePrint Archive},
+  year={2016}
+}
+
+@inproceedings{tan2007ikernel,
+  title={iKernel: Isolating buggy and malicious device drivers using hardware virtualization support},
+  author={Tan, Lin and Chan, Ellick M and Farivar, Reza and Mallick, Nevedita and Carlyle, Jeffrey C and David, Francis M and Campbell, Roy H},
+  booktitle={Third IEEE International Symposium on Dependable, Autonomic and Secure Computing (DASC 2007)},
+  pages={134--144},
+  year={2007},
+  organization={IEEE}
+}
+
+@inproceedings{nikolaev2013virtuos,
+  title={VirtuOS: An operating system with kernel virtualization},
+  author={Nikolaev, Ruslan and Back, Godmar},
+  booktitle={Proceedings of the Twenty-Fourth ACM Symposium on Operating Systems Principles},
+  pages={116--132},
+  year={2013}
+}
 %---------------- websites 
 
  @misc{android_developers_blog_2019, 
@@ -533,3 +606,4 @@ series = {VEE 2021}
  url={https://android-developers.googleblog.com/2019/05/queue-hardening-enhancements.html}, journal={Android Developers Blog}, publisher={Android}, year={2019}, month={May}} 
 
 @misc{nvd, title={NATIONAL VULNERABILITY DATABASE}, url={https://nvd.nist.gov/}, journal={NVD}, publisher={National Institute for Standards and Technology}} 
+

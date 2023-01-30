@@ -90,7 +90,6 @@ Use in general explanation and reasoning
     \item also actually the software already has to be written in message-passing style at least as long as we don't implement conversion of function calls to message formats
 \end{itemize}
 \begin{itemize}
-    \item Do benchmarks give us a hint how startup of unikernels performs compared to VMs and FaaS functions ?
     \item Do we need a similar approach as in MirageOS where libraries are linked to the application by initializing their (serializable) state handle?
     \item How does the level of separation of concerns in unikernel relate to our microkernel target? 
     \begin{itemize}
@@ -147,5 +146,162 @@ Features of Rust that might become relevant for implementation
 %Finally we have to use a recursion instead of a \rust{while} loop. This is a current restriction of Ohua which we discuss in more detail in Section~\ref{subsubsec:WhileLoops}. 
 %\note{Note to me: Ohua also supports 'endless' for loops. However we have no way of gracefully ending them as we a) can not access the loop generator while running and b) we do not support early returns i.e. \rust{break} or \rust{return}}
 %\todo[inline]{figure out recursion}
+
+Those todos where left from RW. I didn't manage to read them but htey might be interesting.
+\todo[inline]{ Check \cite{9973038}: Combined approach using HW protection techniques, compile time analysis, model checking, and compiler runtime measures for protection. Probably cites a lot of approaches.}
+
+\todo[inline]{ Abraham A Clements, Naif Saleh Almakhdhub, Saurabh Bagchi, and Mathias
+Payer. ACES: Automatic compartments for embedded systems. In 27th USENIX
+Security Symposium (USENIX Security 18), pages 65--82, Baltimore, MD, Au-
+gust 2018. USENIX Association.
+}
+
+Paper Stack Notes - Just for me now
+\begin{itemize}
+    \item Language-Agnostic Optimization and Parallelization for Interpreted Languages \means interesting is, that they don't use the language itself but analyze (static+dynamic) traces from the respective interpreters (with all problems that implies as having to separate interpreter introduced flow/dependencies from code flow/dependencies), they derive (or propose to do so) parallelity on the LLVM IR level
+    \item Definitional Interpreters for Higher-Order Programming Languages \means very interesting for basic ideas (and wtf is GEDANKEN? Is it an actual language?), but for now to far off
+    \item Software Compilation Techniques for
+Heterogeneous Embedded Multi-Core Systems \means paper from our chair (at east Jeronimo is on the author list), point is that compilers for MPSoC should except sequential code for the same reasons we bring forward, same time the backend has to distribute parallel tasks in a more coarse grained fashion than single-core compilers do (ILP) \means maybe, if we come to the conclusion that atuomatic extraction of components is possible and stateful components should be annotated, why not annotate them with target architecture directive \means anyway that's just a (faaaarrrr) outlook perspective
+\end{itemize}
+
+\todo[inline]{ I don't know where to put this so I don't forget, Danvys Dr.Sc. Thesis is titled "An Analytical Approach to Programs as Data Objects". Given the chapter titles I think its quite interesting and might be a good start to get the background for transformations}
+\section{remains from related work}
+The general idea to transform programs into data flow automatically is wide spread in particular in data processing and web applications. In case of Big Data applications it is mostly the sheer size of states as for example a trained model that makes 
+state transfer impossible, in case of web applications and client server interactions the interesting question is rather which parts of the server execution state should be stored or send to the client in order to serve multiple clients in an asynchronous fashion.
+
+Here we will only look at some examples for data flow graph compilation, because they illustrate common problems. For example in \cite{fernandez2014making} the goal here was to support arbitrary stateful Java objects in Big Data applications and to recover states upon failures. They distinguish types of state access 
+
+\begin{itemize}
+    \item approach: infer dataflow and 'types of state access' to derive a 'stateful dataflow graph'(SDG)
+    \item they explicitly focus on 'large states', where distribution of such state to several nodes is desirable both for performance/(storage/compute) capacity and for recovery after failure 
+    \item SGD: "cyclic graph of pipelined data-parallel tasks, which execute on different nodes and access local in-memory state" \means no explicit scheduling
+\item to identify 'partial' and 'partitioned' stateful objects, they require annotations from the programmer
+\item they describe some concepts for parallel state handling and failure recovery, which might be helpful later
+\item Graph derivation itself is not to fancy/smart \means  they require different annotations from the programmer to identify how particular states should be used (e.g. if they are global, mutable, can be partitioned etc), 
+\item Limitiations:
+\begin{itemize}
+    \item programmer needs to annotate how states are used
+    \item programmers need to implement the required primitives to handle state in the graph themselves (serialization, definitions for partitioning and recovery) or use predefined classes
+    \item no side-effects on 'single valued' terms (marked by programmer), e.g. used as arguments for (stateful) computations
+    \item deterministic execution: that's basically a requirement for sem. correct failure recovery e.g. program should not depend on current time or similar external state 
+\end{itemize}
+\item We do not aim to distribute the state handling itself, otherwise limitations/prerequisites are pretty similar
+\item they work with checkpoints for failure recovery and synchronization of states and node replication (also for stateful nodes) to eliminate runtime bottlenecks \means not relevant for now, maybe later
+\end{itemize}
+
+Another example is the DFGenTool~\cite{mukherjee2017dfgentool}. It generates a graph representation (DFG in DOT format) from a given program in LLVM IR. This has several advantages for the tool. Using LLVM it is language independent to a certain degree. The LLVM IR also has features that make graph derivation much easier. In particular, during compilation to this IR, conversion to SSA format, simplification of instructions and division of the control flow into basic blocks have already been performed. It is also ensured that values are only used once and that copies are generated for values that enter a divergent control flow. To extract the actual stateful components as well as to distinguish handling mechanisms for states are used read only vs. states that need 
+
+\begin{itemize}
+    \item 
+\means advantages are obv. language+backend independence, but also that Basic Blocks are already identified and separated easing the conversion to nodes.
+    \item available, though not maintained at \url{http://github.com/manideepam/DFGenTool}
+    \item LLVM already provides SSA form, the guarantee that values are used only once and that copies are produced for values entering diverging control flow, also supported data types, by the looks of it are only int, float and arrays. Also to handle reassignments load and store dependencies are derived using LLVM alias analysis module
+    \item \means maybe another example for easier scenarios but not helpful to get ahead, I might check how LLVM alias analysis module works though
+\end{itemize}
+
+"Automatic Extraction of Coarse-Grained Data Flow Threads from Imperative Programs" 
+\begin{itemize}
+    \item prototype compiler based on GCC for rec. C code
+    \item only pure functions
+    \item works on SSA representation
+    \item interesting part: building program dependency graph from SSA (PDG), fuse strongly connected components (SCCs) using dependency analysis (simplified, eg. no arrays) \means "typed fusion", aligning dependency and data flow to data-flow-program-dependency-graph DF-PDG \means conversion algorithms     
+    \item interesting also: mentions decoupled software pipelining (DSWP) technique \means Is it relevant for us?
+\end{itemize}
+
+
+\textbf{Cooperative Task Management without Manual Stack Management
+or, Event-driven Programming is Not the Opposite of Threaded Programming}~\cite{adya2002cooperative}
+\means I think they also describe the transformations we are looking at, at least the part after components are inlined  but they explain it as a process from automatic to manual stack management
+\begin{itemize}
+    \item they bring some arguments and nice explanations for different concepts in
+    concurrent programming in particular event-driven (cooperative tasks) vs. multi-threaded (preemtive or serial task management)
+    \item event-driven is (according to the authors) easier to reason about concerning concurrent correctness
+    \item the rest of the paper explains how both types of stack management can be/are used together using cooperative scheduling in Windows (using threads and fibers respectively)
+\end{itemize}
+
+
+\textbf{Continuations from Generalized Stack Inspection}\cite{}
+\begin{itemize}
+    \item a problem not addressed in CPS is the preservation of the run-time stack for "decomposed" functions
+    \item there are languages like Scheme, that provide first-class continuations (i.e. they can be entirely send around) but most languages (in particular those running on VMs) do not provide means to programmatically save and reinstate the run-time stack. 
+    \item One Solution was to move the run-time stack to the heap (there's just a sourceforge link in the bibliography :-( ), which is effectively what we did.
+    \item The authors use a mechanism called \emph{continuation marks}. They are a form of stack inspection, enabling the programmer to attach values to the control flow stack and set marks, indexed by keys to the stack to later retrieve those values. In a first step they transform a Scheme program into this representation, in the second they use the marks to derive defunctionalization
+    \item \means Not sure but this looks like deciding to integrate intermediate values into the data flow, while we decided to make them part of the local heap of stateful objects.
+\end{itemize}
+\todo[inline]{Check HAKC\cite{mckee2022preventing}, Endokernel\cite{im2021endokernel}}
+
+\section{"Workflow" for Automatic transformation}
+Remaining notes and question for 'automatization'
+\begin{itemize}
+    \item to support lambda lifting this way, a language needs to support sum type definition i.e.
+    \code{type Functions = DoThis | DoThat | DoSomethingElse}
+    Further difficulty: What traits do we need to derive? Obviously Clone and that needs to work because \means all arguments need to implement Clone. What else? Can we assume or derive automatically? 
+    \item Bound variables, i.e. direct function arguments are just included in the function data types (as far as the language supports this, otherwise the Function type needs to represent any possible value of the arguments as individual type). In case of Rust, this is not a problem as sum types can be defined as \rust{enum}s which support additional data
+    \item Free Variables, i.e. enclosed values from functions that where closures usually require lambda lifting. The term basically already describes the underlying principle, namely that free variables in a function are \emph{lifted} to the definition of the function as parameters i.e. bound by the lambda expression defining the function and the function itself is \emph{lifted} to a global scope. A simple example is shown in Figure~\ref{fig:lambdaLift}.
+    \item process \means identify a) basic blocks b) data dependencies \means define function data types, arguments to constructors are data from other components \means define \rust{apply} function \means pattern matching on enums, code in match arms is code called directly before, if we were inside a state before, we need to retrieve and set the state to restore the behavior of the original 'closure'/subcall \means replace jumps and calls to other component with return \means overall return is union of original return and calls to other components
+    \item If arguments follow the control flow they become part of the data type definition for the functions
+    \item If arguments do not follow the control flow, i.e. if they belong to only one component, they are made part of the components state. This is particularly the case for the socket being processed in each round.
+    \item particular issue occurring are lifetimes and ownership. Regardless whether we send values, or store them inside the state they must not reference each other. This is because we split a function, in this case \stack{.socket_egress} and thereby distribute execution that ran on one stack frame to multiple stack frames. As explained in the Background Section~\ref{subsec:Rust} this means that references, bound on the stack frame of one sub-function, can become invalid when the function exits and cannot just be stored in the \stack{}s state for usage in the next sub-function. This becomes particularly obvious when we look at the loop over the sockets. 
+    \item In the sequential program four references to the same object exist simultaneously i) the sockets, ii) the iterator on the sockets iii) the current socket and iv) the packet, which internally holds a reference to the sockets memory. 
+\end{itemize}
+
+\section{Remaining transformation notes}
+
+
+
+Enable stateful computation in branches. Figure~\ref{fig:DFBranching} shows, how branching and stateful call are represented as dataflow graphs. A branching section is guarded by node evaluating the condition, this node produces three output signals. Two of them are control signals, the third one is the boolean evaluation result. The control signals are used by control nodes in the respective branch to guard the execution of the branch. In the \emph{active} branch, the control node will receive the first input and send the first intermediate result for the branch. In our example there is just one input and result per branch, so actually the control nodes and the function nodes \rust{f(x)} or \rust{g(x)} are fused. Finally a \textbf{select} node receives the evaluation result and based on this result decides on which channel to receive the next result from. In our example, if the evaluation resulted in \rust{a = true}, the \rust{select} node tries to receive from the \rust{r1} channel. As receiving is blocking, this ensures that results are received in the same order as the branching instructions where send and therefore that determinism is preserved even if branches act independently.  
+\begin{itemize}
+    \item we also see how stateful operations are translated
+    \item so first 'issue' to integrate stateful ops in branching is, that we need to thread a tuple of \rust{(obj, result)} instead of just the result
+    \item another problem is obv. concurrency. When branches are pure, one branch can start, while the other one is still busy. How can we ensure, that the correct operation uses the correct 'incarnation' of the object, if an object is used in both branches?
+    \item Case 1: Object used only in one branch
+    \item Case 2: Object is used in both branches
+    \item Case 3: Objcet is used more than once.
+\end{itemize}
+\begin{figure}[H]
+\centering
+\tabskip=0pt
+\valign{#\cr
+    \hbox{%
+    \begin{subfigure}{.25\textwidth}
+    \centering
+     \begin{minted}[fontsize=\footnotesize]{rust}
+    if a {
+        f(x)
+    } else {
+        g(x)
+    }
+     \end{minted}
+    \end{subfigure}
+    \begin{subfigure}{.72\textwidth}
+    \centering
+    \includegraphics[height=3cm]{figures/branching_ohua.png}
+     \label{subfig:branchingGraph}
+    \end{subfigure}%
+  }
+  \cr
+  \noalign{\hfill}
+    \hbox{%
+    \begin{subfigure}{.25\textwidth}
+    \centering
+     \begin{minted}[fontsize=\footnotesize]{rust}
+
+     obj.do(x)
+
+     \end{minted}
+    \end{subfigure}    
+    \begin{subfigure}{.72\textwidth}
+    \centering
+    \includegraphics[height=1cm]{figures/method_ohua.png}
+     \label{subfig:methodGraph}
+    \end{subfigure}%
+  }
+  \cr
+}
+\caption{}
+\label{fig:DFBranching}
+\end{figure}
+
+
 
 \end{document}
