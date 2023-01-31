@@ -301,7 +301,8 @@ Enable stateful computation in branches. Figure~\ref{fig:DFBranching} shows, how
 \caption{}
 \label{fig:DFBranching}
 \end{figure}
-
+\todo[inline]{Check where the below comments belong}
+\note{Finally there are some open question we need to address regarding accepted types. Currently the type extraction mechanism just wraps any relevant type annotation from the input code in a to an internal argument type representation. This means, we do not distinguish the actual Rust types and do not filter for references, pointer or trait objects. The goal is of course to develop Ohua and the programming model for Rust to the point where a valid sequential input program never leads to an invalid output program, i.e. we want to achieve soundness. For this we need to evaluate if and how the type system of Rust has to be restricted in the input. And so we need to decide whether to leave this to the programmer, because it depends for example on the chosen backend or if there have to be additional mechanisms in the compiler to enforce these restrictions. We might also need to extend the programming model by necessary augmentation on the original program, like additional trait bounds. For example, an automatic annotation with \rust{[\#derive]} could be generated to add traits, e.g. for serialization that were not necessary in the serial program. We will consider those question in the further development of Ohua and in particular the Rust integration.}
 
 
 \end{document}

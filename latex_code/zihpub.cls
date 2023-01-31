@@ -25,6 +25,7 @@
 % schoene Listings
 \RequirePackage{fancyvrb}
 
+
 % Mathe-krempel laden
 \RequirePackage{amsmath}
 \RequirePackage{amsfonts}
@@ -484,15 +485,7 @@
 \def\@haveapp{}
 \let\@altapp=\appendix
 \renewcommand{\appendix}[0]{\cleardoublestandardpage
-\ifx\@empty\@bibfiles
-\else
-  \bibliography{\@bibfiles}
-\fi
-\cleardoublestandardpage
-\printlof
-\cleardoublestandardpage
-\printlot
-\cleardoublestandardpage
+
 \@altapp
 \def\@haveapp{1}
 }
@@ -680,10 +673,7 @@
 	  \else
 	    \bibliography{\@bibfiles}
 	  \fi
-	  \cleardoublestandardpage
-	  \printlof
-	  \cleardoublestandardpage
-	  \printlot
+	  
 	\fi
 	\cleardoublestandardpage
 	%Danksagung

@@ -1,14 +1,14 @@
-The goal of this work is to understand which transformations are necessary to convert a program from a sequential programming model with shared memory into a distributed, concurrent programming model of a microkernel operating system. A significant part of these transformations is already implemented in the Ohua compiler. Therefore, the specific goal is to understand and close the 'translation gaps' between the programming models of the source program, the current Ohua implementation, and the M3 operating system. So to better understand the work that needs to be done, we will introduce those models in this chapter.
+The goal of this work is to understand which transformations are necessary to convert a program from a sequential programming model with shared memory into a distributed, concurrent programming model of a microkernel operating system. A significant part of these transformations is already implemented in the Ohua compiler. Therefore, the specific goal is to understand and close the 'translation gaps' between the programming models of the source program, the current Ohua implementation, and the \md operating system. So to better understand the work that needs to be done, we will introduce those models in this chapter.
 
 \section{Ohua}
 \label{sec:back_ohua}
-In this section we will introduce the Ohua compiler\cite{ertel2015ohua}. Its essential concept is to extract the underlying data flow graph from a sequential input program. The result is a program structure consisting of individual steps that are connected only by incoming and outgoing data and can be executed concurrently. These individual steps and their data channels can then be mapped to various abstractions of processes and communication channels in the backend of the compiler to achieve parallelization and isolation of the steps. Like most compilers, Ohua works step-by-step with different intermediate representations (IRs) of the input program. To be able to support different languages and target architectures, Ohua uses language integrations. Currently there are integrations for Rust and Python. In the next subsection, we will take a closer look at the basic structure and function of Ohua. 
+In this section we will introduce the Ohua compiler\cite{ertel2015ohua}. Its essential concept is to extract the underlying data flow graph from a sequential input program. The result is a program structure consisting of individual steps that are connected only by incoming and outgoing data and can be executed concurrently. These individual steps and their data channels can then be mapped to various abstractions of processes and communication channels in the backend of the compiler to achieve parallelization and isolation of the steps. Like most compilers, Ohua works step-by-step with different intermediate representations (IRs) of the input program. To be able to support different languages and target architectures, Ohua uses language integrations. Currently there are integrations for Rust and Python. In the next subsection, we will take a closer look at the basic structure and function of Ohua. \\
 
 For this work, it is also important to understand what programming model Ohua currently supports. Here, programming model means on the one hand which restrictions in the syntax of the input programs are currently necessary to be able to convert them into correct concurrent programs. On the other hand it contains the explicit and implicit assumptions about the concrete implementations of 'processes' and 'channels'. So we will also look at these aspects in more detail in this section.
 
 \subsection{Compiler Pipeline}
 \label{subec:OhuaPipeline}
-When we say 'Ohua compiles a program', we mean it compiles functions in the compile scope. In contrast to e.g. rustc or gcc, Ohua does not compile the complete code of the program, but transforms only the functions, for example within one or more Python modules specified in the call. We call these functions algorithms. In contrast to algorithms, functions and methods that are imported and used within algorithms are not compiled. They are completely opaque to the compiler. This also means that Ohua does not require any syntax constraint in these imported functions and methods. An overview of the compiler pipeline is shown in Figure~\ref{fig:ohua_fine}.  
+When we say 'Ohua compiles a program', we mean it compiles functions in the compile scope. In contrast to e.g. rustc or gcc, Ohua does not compile the complete code of the program, but transforms only the functions, for example within one or more Python modules specified in the call. We call these functions algorithms. In contrast to algorithms, functions and methods that are imported and used within algorithms are not compiled. They are completely opaque to the compiler. This also means that Ohua does not require any syntax constraint in these imported functions and methods. An overview of the compiler pipeline is shown in Figure~\ref{fig:ohua_fine}.\\
 
 In the \textbf{compiler frontend}, algorithms of the target language are first parsed and translated into Ohua's frontend language (Frontend IR). This translation is implemented in language specific frontend integrations. That is, for each language supported by Ohua, such a frontend integration must exist. This integration parses algorithms of the input language and translates them into the syntax of the frontend IR. For non-supported syntax constructs, currently for example \rust{break} statements in loops, the compilation terminates at this point. The currently supported subset of Rust can be found in the Appendix~\ref{sec:RustIntegration}.
 
@@ -20,11 +20,11 @@ In the \textbf{compiler frontend}, algorithms of the target language are first p
 \end{figure}
 
 In the \textbf{core compiler} itself there are two main representations of the code. One is Expression IR. This language is functional and based on the call-by-need lambda calculus. To transform input algorithms to this representation 
-calls to other algorithms are inlined, renaming compiler passes ensure single static assignment form, and assignment expressions are refactored to applicative normal form. A simplified example of code before and after the transformation is shown in Figure~\ref{fig:funBodyTranslation}. A central conversion step in the compiler is the transformation of stateful calls to so called \emph{state threads}(\cite{wadler1992essence}, \cite{launchbury1994lazy},\cite{ertel2019stclang}). To generate race condition free tasks, Ohua forbids shared state use and only permits stateful computation inside methods. However, methods in an imperative language mutate objects in place and implicitly refer to the new, changed state by the same reference as before. The conversion of stateful calls to state threads makes the semantic of creating a new state upon calling methods explicit. In the code example in Fig.\ref{fig:funBodyTranslation}, the call \rust{someState.do()}, is internally transformed to explicitly take a state as an argument and return a new, mutated state. Thereby, function calls downstream to not need to access a shared memory to use stateful objects. Based on this explicit state threading, Ertel et al. \cite{ertel2019stclang, ertel2018supporting} developed functional representations for imperative control flow on stateful computations. For example, an imperative for-loop is translated to a so called \rust{smap} operation, which is essentially a fold operation of the loop body on the states manipulated inside the loop. \\
+calls to other algorithms are inlined, renaming compiler passes ensure single static assignment form, and assignment expressions are refactored to applicative normal form. A simplified example of code before and after the transformation is shown in Listing~\ref{fig:funBodyTranslation}. A central conversion step in the compiler is the transformation of stateful calls to so called \emph{state threads}(\cite{wadler1992essence}, \cite{launchbury1994lazy},\cite{ertel2019stclang}). To generate race condition free tasks, Ohua forbids shared state use and only permits stateful computation inside methods. However, methods in an imperative language mutate objects in place and implicitly refer to the new, changed state by the same reference as before. The conversion of stateful calls to state threads makes the semantic of creating a new state upon calling methods explicit. In the code example in Fig.\ref{fig:funBodyTranslation}, the call \rust{someState.do()}, is internally transformed to explicitly take a state as an argument and return a new, mutated state. Thereby, function calls downstream to not need to access a shared memory to use stateful objects. Based on this explicit state threading, Ertel et al. \cite{ertel2019stclang, ertel2018supporting} developed functional representations for imperative control flow on stateful computations. For example, an imperative for-loop is translated to a so called \rust{smap} operation, which is essentially a fold operation of the loop body on the states manipulated inside the loop. \\
 
-\begin{figure}
+\begin{codefigure}
     \centering
-    \begin{subfigure}[b]{0.45\textwidth}
+    \begin{subcodefigure}[b]{0.45\textwidth}
          \centering
          \begin{minted}[fontsize=\small]{rust}
  fn algo(i){
@@ -42,9 +42,9 @@ calls to other algorithms are inlined, renaming compiler passes ensure single st
             \end{minted}
          \caption{Input algorithm}
          \label{simplPyInput}
-     \end{subfigure}
+     \end{subcodefigure}
      \hfill
-     \begin{subfigure}[b]{0.5\textwidth}
+     \begin{subcodefigure}[b]{0.5\textwidth}
          \centering
          \begin{minted}[fontsize=\small, escapeinside=||,mathescape=true]{haskell}
 let someState = 
@@ -57,24 +57,23 @@ let someState =
         \vspace{15mm}
     \caption{Pseudocode of IR}
          \label{simplIR}
-    \end{subfigure}
+    \end{subcodefigure}
 \caption{An algorithm is mapped to a nested let-expression with the innermost term representing its return value}
 \label{fig:funBodyTranslation}
-\end{figure}
-
+\end{codefigure}
 
 The next representation in the compile flow is the Data Flow Graph (DFG) representation. Independent program tasks are encapsulated in the this representation and are explicitly assigned their incoming outgoing data channels. Besides function calls from the original program, this representation also contains control nodes that govern the data flow. For example if the input code contained a branching statement like \rust{if cond {f()} else {g()}} control nodes will be introduced to a) switch data flow between calls to \rust{f()} or \rust{g()} and b) to collect results from appropriate output channels of \rust{f()} or \rust{g()} depending on the condition. This representation also allows to merge certain nodes by fusing their code, as well as input and output channels. This is done for instance if a following node entirely depends on its predecessor and has so little work to do that it would hardly justify the overhead of spinning up an independent task in any backend implementation.\\
 
 Which ultimately brings us to the \textbf{compiler backend} and backend integrations of Ohua. Backend integrations consist of two parts. The 'Language Backend' is only language specific. Similar to the frontend integration, it serves the purpose of translating code inside tasks from Ohua representation syntax back to the target language syntax. The 'Architecture Backend' is responsible for translating the 'nodes' and 'edges' of the DFG into a specific implementation for concurrent tasks, communication channels and a runtime for the graph. For example, there can be two different architectures for a given language: one implementing tasks as threads and one using processes, with both also generating appropriate channels and runtime code to execute the DFG. As we did not compile imported functions, the target language must match the input language, which is automatically ensured by the compiler. Architectures for the same language can be used interchangeably. This way Ohua can generate e.g. multi-threaded shared memory or fully distributed programs from the same input.\\
 
-In the next section we will take a closer look at the restrictions and assumptions required to make this work.
+In the next section we will take a closer look at the restrictions and assumptions required to ensure that compilation works as expected.
 
 \subsection{Programming Model}
 
 The term programming model generally describes a relationship between syntax constructs in a programming language and their concrete semantics in a particular execution environment. In the case of Ohua, the programming model includes, on the one hand, the supported input syntax and the assumptions made about the supported terms of the input language. On the other hand, it specifies how these terms are translated into a dataflow graph and what assumptions Ohua makes about the implementation of nodes, edges, and runtime of the DFG. First we will look into the supported input syntax and assumed semantics. 
 
 \subsubsection{Input Syntax and Semantics}
-We already know that Ohua's basic input units are algorithms, i.e. pure functions inside the compile scope. Figure~\ref{tab:FrontendIR} depicts the language definition of the frontend representation described before. Any syntax construct of the input language has to be mapped to the according terms of this language to be compiled. In the following paragraphs we will describe the accepted syntax constructs and the semantics the programming model expects them to have. \\
+We already know that Ohua's basic input units are algorithms, i.e. pure functions inside the compile scope. Table~\ref{tab:FrontendIR} depicts the language definition of the frontend representation described before. Any syntax construct of the input language has to be mapped to the according terms of this language to be compiled. In the following paragraphs we will describe the accepted syntax constructs and the semantics the programming model expects them to have. \\
 
 
 \begin{table}[ht]
@@ -117,7 +116,7 @@ Currently, the output of recursive algorithms cannot be used in an assignment, i
 
 \textbf{Return, Continue, Break:} Ohua currently does not support any forms of early return of conditional execution except for recursion and branching as described before. Therefore, \rust{break} and \rust{continue} are generally not supported at the moment, while \rust{return} is supported only for Python and only at as the last statement of a function block, because contrary to Rust there is no implicit value return in Python. \\
 
-\textbf{Variables and Literals:} There are two categories of variables. Local variables are bound inside algorithms, environment variables are bound in outer scope. Thus, environment variables are basically arguments of the algorithms, but can also be imported or globally defined names. Ohua supports mutable and immutable local variable bindings. Local variables can either be used as a state, or as an argument to a function call. If it is used as an argument it can only be used once, if it is used as a state, it may be used more than once except, as explained before, inside loops. Environment variables cannot be used as a state directly\footnote{This changed during the course of this work. Now arguments to algorithms can be used directly as a generator for a for-loop.}, but can be used several times as function call argument. The underlying assumption of this distinction is that environment variables will be available in scope for all nodes created from an algorithm, while locally bound variables are sent to the consuming node. This assumption becomes relevant in architectures where the generated tasks have no access to a common global scope. In those cases, environment variables are not available to the task via a closure mechanism. This will be the case for M3 tasks. Finally there is a limited set of literals that is directly supported in the input. This includes integers, booleans, strings and unit literals. Other literals must be wrapped in a function call currently (simple binary operations are sufficient here e.g. to compile \rust{let x = 17} one could write \rust{let x = 17 + 0}).\\
+\textbf{Variables and Literals:} There are two categories of variables. Local variables are bound inside algorithms, environment variables are bound in outer scope. Thus, environment variables are basically arguments of the algorithms, but can also be imported or globally defined names. Ohua supports mutable and immutable local variable bindings. Local variables can either be used as a state, or as an argument to a function call. If it is used as an argument it can only be used once, if it is used as a state, it may be used more than once except, as explained before, inside loops. Environment variables cannot be used as a state directly\footnote{This changed during the course of this work. Now arguments to algorithms can be used directly as a generator for a for-loop.}, but can be used several times as function call argument. The underlying assumption of this distinction is that environment variables will be available in scope for all nodes created from an algorithm, while locally bound variables are sent to the consuming node. This assumption becomes relevant in architectures where the generated tasks have no access to a common global scope. In those cases, environment variables are not available to the task via a closure mechanism. This will be the case for \md tasks. Finally there is a limited set of literals that is directly supported in the input. This includes integers, booleans, strings and unit literals. Other literals must be wrapped in a function call currently (simple binary operations are sufficient here e.g. to compile \rust{let x = 17} one could write \rust{let x = 17 + 0}).\\
 
 Many of the current limitations are only due to lack of implementation. For example, there is no formal reason to allow recursive calls only in the if branch. These limitations will be fixed in the future. At the moment, however, they are the main reason why control flow expressions cannot be freely combined. That is, there are currently restrictions on the frontend language that are not reflected in the language itself.
 
@@ -218,24 +217,17 @@ The minimality principle basically limits the essential components of kernel-to-
 
 This design comes with an inherent performance penalty. In a monolithic system a userspace application requiring access to hardware or system services would cause a single context switch to kernel mode. The request would be answered and the result returned to the userspace process. In a microkernel, however, the request of the user application will be forwarded by the kernel via IPC, e.g. to a driver process that again answers via IPC indirected through the kernel. In this simple scenario, the number of context switches doubles from two to four. Also, the communication among system services is just function calls in monoliths, while it again involves IPC and four context switches for each invocation among services. \\
 
-Currently existing examples of microkernels are L4 (formerly L3 \cite{liedtke1993persistent}), Minix \cite{herder2006minix}, Singularity \cite{hunt2005overview} or the QNX microkernel OS\cite{hildebrand1992architectural} used in embedded systems for example in phones, or as real time OSs in cars.
+Currently existing examples of microkernels are L4 (formerly L3 \cite{liedtke1993persistent}), Minix \cite{herder2006minix}, Singularity \cite{hunt2005overview} or the QNX microkernel OS\cite{hildebrand1992architectural} used in embedded systems for example in phones, or as real time OSs in cars.\\
 
 \textbf{Unikernels\cite{madhavapeddy2014unikernels} $\blacktriangleright$}: Unikernels also tackle the problem of large code base and attack surface in monolithic kernels. However, they follow a different approach concerning process isolation. The 'uni' in unikernels refers to the idea of compiling a specific kernel for each application or even component of larger applications. Basis for compilation is a library operating system written in rather high level languages, the user program, and a configuration file to specify the target architecture and the required library components. Library operating systems provide functionalities of monolithic kernels as independent library implementations. For example, device drivers for physical NICs are implemented in libraries that can be combined with potentially different implementations of the TCP/IP stack. Examples of library operating systems are  MirageOS\cite{madhavapeddy2013unikernels}, Graphene~\cite{tsai2014Graphene}, IncludeOS~\cite{bratterud2015includeos} or Unikraft~\cite{kuenzer2021unikraft}.
 In the compiled unikernel, all processes run with kernel privileges and have direct access to the hardware or hardware abstraction layer (e.g. a hypervisor). This reduces size and attack surface compared to monolithic kernels and has, unlike monolithic and microkernels, no IPC overhead for context switches. 
-It is not well suited and not intended to be used for multi-user scenarios. However, large applications can be realized with unikernels by distributing the app components into several distinct unikernels. In cloud applications, this setup allows the hypervisor to scale only required parts of the application. 
-
-\todo[inline]{What kind of organization is unikernel.org? \cite{unikernelorg}}
-Examples of this are CubicleOS~\cite{sartakov2021cubicleos}, FlexOS~\cite{lefeuvre2021flexos} and M$^3$x~\cite{Asmussen:M3x}, M$^3$v~\cite{Asmussen:M3v}.
-\todo[inline]{read \cite{madhavapeddy2014unikernels},CubicleOS~\cite{sartakov2021cubicleos}, FlexOS~\cite{lefeuvre2021flexos} and M$^3$x~\cite{Asmussen:M3x}, M$^3$v~\cite{Asmussen:M3v} \means how are the kernels compiled, what's there scope? }
-
+It is not well suited and not intended to be used for multi-user scenarios. However, large applications can be realized with unikernels by distributing the app components into several distinct unikernels. In cloud applications, this setup allows the hypervisor to scale only required parts of the application. Examples of this principle are CubicleOS~\cite{sartakov2021cubicleos} and FlexOS~\cite{lefeuvre2021flexos}.
 
 \section{The M\textsuperscript{3} Operating System}
 \subsection{The Concept}
-M$^3$\cite{Asmussen:M3x} is a microkernel concept/architecture for distributed and potentially heterogeneous architecture, as for example different embedded processors cooperating in modern cars. It comprises a hardware and a corresponding software, i.e. OS and kernel design. Specifically, the hardware design describes the components necessary to connect and control separate chips, e.g. for broadband communication, signal processing (camera, GPS), or cryptographic operations, while the corresponding operating system provides communication and access to the hardware for the apps running on each component.
+M$^3$\cite{Asmussen:M3x} is a microkernel concept/architecture for distributed and potentially heterogeneous architecture, as for example different embedded processors cooperating in modern cars. It comprises a hardware and a corresponding software, i.e. OS and kernel design. Specifically, the hardware design describes the components necessary to connect and control separate chips, e.g. for broadband communication, signal processing (camera, GPS), or cryptographic operations, while the corresponding operating system provides communication and access to the hardware for the apps running on each component.\\
 
-An overview of the principle design of M$^3$ is shown in Figure~\ref{fig:m3}. The architecture is composed of tiles, communicating with each other via data transfer units (DTU). There is only one tile that runs the actual microkernel. This tile is also the only one requiring a general purpose core (GPC) as underlying hardware. The computing units (CU) inside the other tiles might be general purpose CPUs, FPGAs, DSPs or fixed-function accelerators. Processes on CUs run independently and isolated from each other. They can however communicate to each other via the DTUs.
-
-The kernel is responsible for scheduling tasks on the CUs. Running tasks are called activities. On tiles using CPUs, an activity is basically a running system thread. Via the DTUs, the kernel can also control context switches between activities on the CUs and establish communication relations between activities. By default, activities run in their own address space and are disconnected from each other. To establish a connection, an activity \code{A} would once request the kernel to connect, for instance to an activity \code{B} running the network stack. Once that connection is established, the activities can directly communicate without involving the kernel again, which eliminates some of the communication overhead in other microkernel systems. 
+An overview of the design of M$^3$ is shown in Figure~\ref{fig:m3}. The architecture is composed of tiles, communicating with each other via data transfer units (DTU). There is only one tile that runs the actual microkernel. This tile is also the only one requiring a general purpose core (GPC) as underlying hardware. The computing units (CU) inside the other tiles might be general purpose CPUs, FPGAs, DSPs or fixed-function accelerators. Processes on CUs run independently and isolated from each other. They can however communicate to each other via the DTUs. The kernel is responsible for scheduling tasks on the CUs. Running tasks are called activities. On tiles using CPUs, an activity is basically a running system thread. Via the DTUs, the kernel can also control context switches between activities on the CUs and establish communication relations between activities. By default, activities run in their own address space and are disconnected from each other. To establish a connection, an activity \code{A} would once request the kernel to connect, for instance to an activity \code{B} running the network stack. Once that connection is established, the activities can directly communicate without involving the kernel again, which eliminates some of the communication overhead in other microkernel systems. 
 
 \begin{figure}[H]
     \centering
@@ -244,17 +236,17 @@ The kernel is responsible for scheduling tasks on the CUs. Running tasks are cal
     \label{fig:m3}
 \end{figure}
 
-In Section~\ref{subsec:BackendRequirements} we discussed the assumptions Ohua makes about the backend architectures' tasks and channels. In particular, we noticed that tasks have to be cooperatively scheduled and channels have to ensure in-order, guaranteed delivery. Here we take a look if these requirements are fulfilled by M$^33$.\\
+In Section~\ref{subsec:BackendRequirements} we discussed the assumptions Ohua makes about the backend architectures' tasks and channels. In particular, we noticed that tasks have to be cooperatively scheduled and channels have to ensure in-order, guaranteed delivery. Here we take a look if these requirements are fulfilled by M$^3$.\\
 
 When activities are idle, they notify the kernel, which can then schedule another activity. So cooperative scheduling is given. Communication channels are unidirectional, first-in-first-out connections. Activities are not aware if their communication partner is currently running or suspended i.e. if the context was switched by the kernel. The hardware (i.e. the DTU of the receiving tile) detects attempts to communicate with a not-running activity and errors back to the sending activity. Upon such error, the sending activity invokes the kernel to schedule the required receiving activity. The kernel buffers messages for the receiver in this case. Despite this fallback mechanism, the authors state that message delivery has only-once semantic, so data access can/must be repeated if necessary upon failure. 
 
 \subsection{The Rust API}
-M3 provides a Rust integration to access its abstractions of processes and channels. Here we briefly describe the main features of this API. A simple example of how an activity can be instantiated is shown in Figure~\ref{fig:startingActivity}\footnote{Example adapted from \href{https://github.com/Barkhausen-Institut/M3/blob/master/src/apps/rustunittests/src/tactivity.rs}{M3 Rust unit tests}}. Activities can be initiated either on a common tile or on several tiles. In the example, the tile of the parent process is used. The API uses a closure syntax to define activities. However, those definitions have no closure semantic, i.e. they do not enclose definitions from the surrounding scope.\\
+\md provides a Rust integration to access its abstractions of processes and channels. Here we briefly describe the main features of this API. A simple example of how an activity can be instantiated is shown in Listing~\ref{fig:startingActivity}\footnote{Example adapted from \href{https://github.com/Barkhausen-Institut/M3/blob/master/src/apps/rustunittests/src/tactivity.rs}{\md Rust unit tests}}. Activities can be initiated either on a common tile or on several tiles. In the example, the tile of the parent process is used. The API uses a closure syntax to define activities. However, those definitions have no closure semantic, i.e. they do not enclose definitions from the surrounding scope.\\
 
 To pass capabilities and file descriptors to a child activity, the attribute \rust{activity.data_sink()} can be used to serialize data into the process memory. This data can be accessed from inside the activity code using \rust{data_source()}. Serialization is implemented in a custom \rust{Serializer} based on the \rust{serde} crate. We need this mechanism, as shown in the example, to pass send and receive gates to the activities. For simple environmental variables, the API provides a separate mechanism using \rust{m3::env}. This basically provides a global key-value store in which variables can be stored before the definition of an activity, retrieved by key inside the activity, and deleted after the activity definition to not pollute the namespace.\\
 
 
-\begin{figure}
+\begin{codefigure}
     \centering
     \begin{minted}[fontsize=\footnotesize]{rust}
 fn run_send_receive(t: &mut dyn WvTester) {
@@ -290,53 +282,49 @@ fn run_send_receive(t: &mut dyn WvTester) {
 }
     
     \end{minted}
-    \caption{Example of creating and running a Rust activity on M3}
+    \caption{Example of creating and running a Rust activity on \md}
     \label{fig:startingActivity}
-\end{figure}
+\end{codefigure}
 
-Concerning process communication, the API provides different mechanisms (mainly depending on the size of the data to be transmitted) of which direct sending over channels is the most relevant to us. M3 manages communication among processes using capabilities. The capability to directly send to or receive from another process is implemented as \rust{Gate}s in the M3 Rust API. Gates are synchronous, directed one-to-one connections, so there are send gates \rust{SGate} and receive gates \rust{RGate}. Receive gates are instantiated with a maximum message size and a maximum overall size of the message buffer to prevent memory overflows in limited environments. The absolute (system immanent) maximum message size is 2 kb. Send gates are instantiated with a number of credits. With each message send, one credit is used. The receiver can return those credits by answering on a received message. Note that this mechanism is hidden inside the \rust{recv_msg} and \rust{send_vmsg!} calls. Both are or contain macro calls to generate and receive responses upon message receipt to pass back sending credits. \\
+Concerning process communication, the API provides different mechanisms (mainly depending on the size of the data to be transmitted) of which direct sending over channels is the most relevant to us. \md manages communication among processes using capabilities. The capability to directly send to or receive from another process is implemented as \rust{Gate}s in the \md Rust API. Gates are synchronous, directed one-to-one connections, so there are send gates \rust{SGate} and receive gates \rust{RGate}. Receive gates are instantiated with a maximum message size and a maximum overall size of the message buffer to prevent memory overflows in limited environments. The absolute (system immanent) maximum message size is 2 kb. Send gates are instantiated with a number of credits. With each message send, one credit is used. The receiver can return those credits by answering on a received message. Note that this mechanism is hidden inside the \rust{recv_msg} and \rust{send_vmsg!} calls. Both are or contain macro calls to generate and receive responses upon message receipt to pass back sending credits. \\
 
 Apart from the credit system, sending messages is straight forward, as known from most pipe-like interfaces. Receiving is done in two steps. First a receive stream is requested using \\
-\rust{let stream = rgate.recv_msg()}. This is a blocking call, that will return upon available messages arriving at the gate. The second step is calling \rust{let msg = stream.pop()}, which is non blocking. This call can be done arbitrarily often on an existing stream but will fail if there are no more messages in the stream.\\
+\rust{let stream = rgate.recv_msg()}. This is a blocking call, that will return upon available messages arriving at the gate. The second step is calling \rust{let msg = stream.pop()}, which is non blocking. This call can be done arbitrarily often on an existing stream but will fail if there are no more messages in the stream. Finally, a limitation of the current \md API is that the standard library is not supported. There is a separate implementation of \rust{std} with essential functions but partly different function signatures. For smoltcp itself this limitation is not relevant, since it is written without using the standard library. In contrast, the libc API is a necessary part of smoltcp and is supported by \md. 
 
-Finally, a limitation of the current M3 API is that the standard library is not supported. There is a separate implementation of \rust{std} with essential functions but partly different function signatures. For smoltcp itself this limitation is not relevant, since it is written without using the standard library. In contrast, the libc API is a necessary part of smoltcp and is supported by M3. 
-
-\subsection{Existing M3 Architecture Integration}
-Ohua already features an architecture integration for Rust on M3. It is built on a simplified API of M3 that provides two main encapsulations, the \rust{channel()} call and the \rust{activity!} macro. Figure~\ref{fig:OhuaM3Wrapper} shows how an activity can be created using those functionalities. The function \rust{channel} basically wraps the initialization of pairs of send and receive gates with default message orderings, a default message size, and a default of one send credit. This allows to create channels basically the same way as in pure Rust or Python. The \rust{activity!} generates code to 1) instantiate a \rust{ChildActivity} on the current tile, 2) delegate the given gates to the activity, and 3) bind and activate the gates inside the activity. This again basically resembles the initialization of a thread in pure Rust. 
+\subsection{Existing \md Architecture Integration}
+Ohua already features an architecture integration for Rust on \md. It is built on a simplified API of \md that provides two main encapsulations, the \rust{channel()} call and the \rust{activity!} macro. Listing~\ref{fig:OhuaM3Wrapper} shows how an activity can be created using those functionalities. The function \rust{channel} basically wraps the initialization of pairs of send and receive gates with default message orderings, a default message size, and a default of one send credit. This allows to create channels basically the same way as in pure Rust or Python. The \rust{activity!} generates code to 1) instantiate a \rust{ChildActivity} on the current tile, 2) delegate the given gates to the activity, and 3) bind and activate the gates inside the activity. This again basically resembles the initialization of a thread in pure Rust. 
 
 
-\begin{figure}
+\begin{codefigure}
     \centering
     \begin{minted}[fontsize=\footnotesize]{rust}
-use funs::hello_world;
-
-fn test() -> String {
-   use m3::com::channel::{Sender, Receiver};
-   use m3::activity;
-   let (a_0_0_tx, mut a_0_0_rx) = channel(); 
-    activity!(
-        (|a_0_0_child_tx: Sender| {    
-            let a_0_0 = hello_world();
-            a_0_0_child_tx.send(a_0_0)?;
-            Ok(())
-          }
-        )(a_0_0_tx)
-    );
-    a_0_0_rx.activate()?;
-    a_0_0_rx
-    .recv::<String,>()
-    .expect("Error message")
-}
+    use funs::hello_world;
+    
+    fn test() -> String {
+       use m3::com::channel::{Sender, Receiver};
+       use m3::activity;
+       let (a_0_0_tx, mut a_0_0_rx) = channel(); 
+        activity!(
+            (|a_0_0_child_tx: Sender| {    
+                let a_0_0 = hello_world();
+                a_0_0_child_tx.send(a_0_0)?;
+                Ok(())
+              }
+            )(a_0_0_tx)
+        );
+        a_0_0_rx.activate()?;
+        a_0_0_rx.recv::<String>().expect("Error message")
+    }
 
     \end{minted}
-    \caption{Example of creating an activity using the simplified M3 Rust API}
+    \caption{Example of creating an activity using the simplified \md Rust API}
     \label{fig:OhuaM3Wrapper}
-\end{figure}
+\end{codefigure}
 
-However, as previously explained, activities in M3 are not closures. This means that in order to use environment variables, an additional mechanism will be necessary. This is currently not part of the architecture integration.
+However, as previously explained, activities in \md are not closures. This means that in order to use environment variables, an additional mechanism will be necessary. This is currently not part of the architecture integration.
 
 \section{smolTCP}
-smolTCP~\cite{smolTCP} is a Rust-based open-source implementation of a TCP/IP stack. It runs entirely as a user space application. It also provides conditional compilation features to build applications without heap allocation. This makes smoltcp and applications built with it amenable to be used in microkernels such as M$^3$\cite{Asmussen:M3v} and embedded systems such as ARTIQ (e.g. \cite{lam2021combining}). In fact, the microkernel operating system Redox\cite{redoxwebsite}, as well as M3 itself, already use smoltcp for their network stack implementation. So in both systems, smoltcp is used to create a network stack as a sequential, userspace service. This means that, in contrast to the application to be developed in this thesis -- the TCP/IP layer, the actual network layer or system interface and the user application communicate with each other via shared memory. \\
+smolTCP~\cite{smolTCP} is a Rust-based open-source library for network stack implementations. It runs entirely as a user space application. It also provides conditional compilation features to build applications without heap allocation. This makes smoltcp and applications built with it amenable to be used in microkernels such as M$^3$\cite{Asmussen:M3v} and embedded systems such as ARTIQ (e.g. \cite{lam2021combining}). In fact, the microkernel operating system Redox\cite{redoxwebsite}, as well as \md itself, already use smoltcp for their network stack implementation. So in both systems, smoltcp is used to create a network stack as a sequential, userspace service. This means that, in contrast to the application to be developed in this thesis -- the TCP/IP layer, the actual network layer or system interface and the user application communicate with each other via shared memory. \\
 
 The design of the library is structured according to typical TCP/IP layering. We will briefly introduce the three main layers or components, respectively, that are relevant in this work\footnote{For more information see the documentation at \url{https://docs.rs/smoltcp/latest/smoltcp/}.}.
 
@@ -348,20 +336,19 @@ The \rust{iface} module provides the abstractions of the IP layer. The most impo
 
 Finally, the physical layer is implemented in the \rust{phy} module. It provides different implementations of the \rust{Device} trait, to connect the application to the underlying operating systems loopback or tuntap interface or raw sockets. Implementors of the \rust{Device} trait provide the methods \rust{receive}, \rust{transmit} and \rust{capabilities}.\\
 
-The actual transfer of packets from the interface to the device is realized via sending and receiving tokens. We explain this in a little more detail here, because it exemplifies a characteristic of the smoltcp code. A successful call to \rust{device.receive()} will yield a tuple of a receive token \rust{RxToken} and a send token \rust{TxToken}. The former will contain the actual received content as a private field, the latter contains a reference to the device specific storage for outgoing packets. In case of tuntap and rawsocket devices, this reference is a file pointer provided by the operating system. In Figure~\ref{fig:TokensAndClosures} the implementation of a sending \rust{TxToken} for raw sockets and the usage of such token to send an Ethernet frame are shown. Two things become apparent. First, the memory for the packets is allocated only at device level upon consuming a token. Second, any structs needed to construct the frame are instantiated in a closure passed as an argument to \rust{tx_token.consume()}. As closures are realized via fixed size structs on the stack frame of the called function, this technique enables smoltcp to work without heap allocation and is used heavily in the code. This principle is used in a cascading manner i.e. \rust{dispatch_ethernet} itself also receives a closure capturing objects from the calling scope.\\
+The actual transfer of packets from the interface to the device is realized via sending and receiving tokens. We explain this in a little more detail here, because it exemplifies a characteristic of the smoltcp code. A successful call to \rust{device.receive()} will yield a tuple of a receive token \rust{RxToken} and a send token \rust{TxToken}. The former will contain the actual received content as a private field, the latter contains a reference to the device specific storage for outgoing packets. In case of tuntap and rawsocket devices, this reference is a file pointer provided by the operating system. In Lising~\ref{fig:TokensAndClosures} the a slightly simplified implementation of a sending \rust{TxToken} for raw sockets and the usage of such token to send an Ethernet frame are shown. Two things become apparent. First, the memory for the packets is allocated only at device level upon consuming a token. Second, any structs needed to construct the frame are instantiated in a closure passed as an argument to \rust{tx_token.consume()}. As closures are realized via fixed size structs on the stack frame of the called function, this technique enables smoltcp to work without heap allocation and is used heavily in the code. This principle is used in a cascading manner i.e. \rust{dispatch_ethernet} itself also receives a closure capturing objects from the calling scope.\\
 
 Obviously, one implication of separating the layers of smoltcp to different, memory separated components is that this kind of memory efficiency cannot be maintained. 
 
-\begin{figure}[H]
+\begin{codefigure}[H]
 \centering
 \tabskip=0pt
 \valign{#\cr
     \hbox{%
-    \begin{subfigure}{.37\textwidth}
+    \begin{subcodefigure}{.41\textwidth}
     \centering
      \begin{minted}[fontsize=\tiny]{rust}
 // Sending Token for RawSocket
-
 pub struct TxToken {
     lower: Rc<RefCell<sys::RawSocketDesc>>,
 }
@@ -384,45 +371,44 @@ impl phy::TxToken for TxToken {
     }
 }
      \end{minted}
-    \end{subfigure}%
+    \end{subcodefigure}%
   }
   \cr
   \noalign{\hfill}
     \hbox{%
-    \begin{subfigure}{.62\textwidth}
+    \begin{subcodefigure}{.57\textwidth}
     \centering
     \begin{minted}[fontsize=\tiny]{rust}
-    //Interface using a TxToken to send a frame
-    
-    pub fn dispatch_ethernet<Tx, F>(
-    &mut self, 
-    tx_token: Tx, 
-    buffer_len: usize, 
-    f: F) -> Result<()>
-    where
-        Tx: TxToken,
-        F: FnOnce(EthernetFrame<&mut [u8]>),
-    {
-        let tx_len = EthernetFrame::<&[u8]>::buffer_len(buffer_len);
-        tx_token.consume(self.now, tx_len, |tx_buffer| {
-            ...
-            let mut frame = EthernetFrame::new_unchecked(tx_buffer);
-            let src_addr = {...};
-            
-            // closure from outer scope:
-            f(frame);
-            Ok(())
-        })
-    }
+        //Interface using a TxToken to send a frame
+        pub fn dispatch_ethernet<Tx, F>(
+        &mut self, 
+        tx_token: Tx, 
+        buffer_len: usize, 
+        f: F) -> Result<()>
+        where
+            Tx: TxToken,
+            F: FnOnce(EthernetFrame<&mut [u8]>),
+        {
+            let tx_len = EthernetFrame::buffer_len(buffer_len);
+            tx_token.consume(self.now, tx_len, |tx_buffer| {
+                ...
+                let mut frame = EthernetFrame::new(tx_buffer);
+                let src_addr = {...};
+                
+                // closure from outer scope:
+                f(frame);
+                Ok(())
+            })
+        }
     \end{minted}
-    \end{subfigure}%
+    \end{subcodefigure}%
   }
   \vfill
   \cr
 }
 \caption{Sending and receiving packages is implemented via Tokens exposing a \rust{consume} method, taking closures as argument that process the send or received content. This way, memory allocation can be constrained a) to the device layer and b) to the stack if necessary.}
 \label{fig:TokensAndClosures}
-\end{figure}
+\end{codefigure}
 
 \section{Rust}
 \label{subsec:Rust}
@@ -453,7 +439,7 @@ When are lifetime annotations needed? The simple answer is: whenever there are r
     \rust{fn fun<'a, 'b, ..., 'z>(a:&'a A, b:&'b B, ...) -> &'z Z}
     \item If there is only one input reference, its lifetime is also assigned to the output reference.\\
      \rust{fn fun<'a>(a:&'a A) -> &'a Z}
-    \item If the function is a method all outputs are assigned the lifetime of the object acted on.\\ \rust{fn fun<'self, 'a, ... >(& 'self self, a:&'a A,...) -> (&'self Z1, &'self Z2} 
+    \item If the function is a method all outputs are assigned the lifetime of the object acted on.\\ \rust{fn fun<'self, 'a, ... >(& 'self self, a:&'a A,...)} \\ \rust{ -> (&'self Z1, &'self Z2, ..)} 
 \end{enumerate}
 
 The same lifetime rules that hold for function arguments and returns basically hold for structs. A \rust{struct} holding a reference in a field requires that reference to come from a surrounding scope. Just as a function cannot take a reference that might not live as long as the function runs, a \rust{struct} can only live as long as the shortest living reference it holds. The same holds for \rust{enum}s, obviously. Just like for functions, this means that those \rust{struct}s and \rust{enum}s are generic over at least one lifetime parameter, determined by the reference they are given on creation.\\

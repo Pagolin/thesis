@@ -1,4 +1,4 @@
-\documentclass[diplominf, bibnum, lof, lot]{zihpub}
+\documentclass[diplominf, bibnum]{zihpub}
 
 \usepackage{color}
 \usepackage{float}
@@ -9,6 +9,12 @@
 \usepackage{pbox}
 \usepackage{subcaption}
 \usepackage{todonotes}
+
+
+% Listings mit subfigures
+\usepackage{newfloat}
+\usepackage{subcaption}
+\DeclareFloatingEnvironment[name={Listing}]{codefigure}
 
 % Just for convenience
 
@@ -25,7 +31,8 @@
 \newcommand{\dev}[1]{\rust{device#1}}
 \newcommand{\stack}[1]{\rust{ip_stack#1}}
 \newcommand{\store}[1]{\rust{store#1}}
-\newcommand{\md}[0]{M$^3$}
+\newcommand{\md}[0]{M$^3\ $}
+
 
 \author{Lisza Zeidler}
 \title{Bricks of a Network Stack}
@@ -48,31 +55,41 @@
 \begin{document}
 \begin{thesisdocument}
 
-\todo[inline]{replace figure environments with listing environments, adapt references and have a separate list for it. A how to is e.g. here: \url{https://latex-tutorial.com/code-listings/}}
+%\todo[inline]{replace figure environments with listing environments, adapt references and have a separate list for it. A how to is e.g. here: \url{https://latex-tutorial.com/code-listings/}}
 
-\chapter{Introduction}
-\label{Chapter:Intro}
-\input{chapters/introduction}
+%\chapter{Introduction}
+%\label{Chapter:Intro}
+%\input{chapters/introduction}
 
 \chapter{Background}
 \label{Chapter:Background}
 \input{chapters/background}
 
-\chapter{Implementation}
-\label{Chapter:Implementation}
-\input{chapters/implementation}
+%\chapter{Implementation}
+%\label{Chapter:Implementation}
+%\input{chapters/implementation}
 
-\chapter{Related Work}
-\label{Chapter:Related}
-\input{chapters/relatedwork}
+%\chapter{Related Work}
+%\label{Chapter:Related}
+%\input{chapters/relatedwork}
 
-\chapter{Evaluation and Lessons learned}
-\label{Chapter:Learnings}
-\input{chapters/LearningsAndEvalutation}
+%\chapter{Evaluation and Lessons learned}
+%\label{Chapter:Learnings}
+%\input{chapters/LearningsAndEvalutation}
 
 \chapter{Conclusion}
 \label{Chapter:Discussion}
 \input{chapters/conclusion}
+
+\cleardoublestandardpage
+\bibliography{\@bibfiles}
+\cleardoublestandardpage
+\listoffigures
+\cleardoublestandardpage
+\listof{codefigure}{List of Listings}      
+\cleardoublestandardpage
+\listoftables
+
 
 \appendix
 \chapter{Appendix}
