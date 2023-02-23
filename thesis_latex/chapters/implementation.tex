@@ -155,7 +155,11 @@ In the next sections, we will first take a closer look at the control flow in po
 
 \subsection{Encapsulating the Socket Handling}
 \label{subsec:SocketHandling}
-In sketching the target program, the first change made to the original code was to encapsulate as much of the logic as possible into either the states or the initialization functions. As a first guess, the socket handling i.e. checking if sockets are open, setting them to listening state etc. was encapsulated in the \store{.handle_sockets} call. The problem with this decision is that the actual \rust{SocketSet} type contains lifetime bound references, meaning they do not implement \rust{Clone} and we cannot just replace passing them by reference with actually moving them. Implementing a custom, owned version of the \rust{SocketSet} would be a remedy for this problem. However, the internal references are actually different buffer types used in the sockets and manipulated in many places in the core logic of smoltcp. This means that implementing a custom, owned \rust{SocketSet} type would not only result in extensive changes, but would also negatively affect the efficiency of the program. The other option is to not send the sockets, but only the required information among components. What this required information is, depends on how each of the components involved interacts with the sockets. For our example key-value store application, the interaction between sockets and \store{} is fairly simple. The \store{} receives a message from a socket and answers it. As we will later see, the interaction between the \stack{} and the sockets is rather involved. So instead of having a free-floating \rust{SocketSet} in the main scope, we make it part of the \stack{} upon initialization. This also means, we need to move the code for handling the sockets into the \stack{} as well and return to the \store{} not directly after polling, but when a socket is processed. We will discuss how this is done in Section~\ref{subsec:refactorReceiving}. The main point here is to illustrate the problem of designing the interfaces between components, if they are not clearly defined in the first place. A less simple case could have involved, for instance, conditional opening or closing of sockets by the \store{} based on concrete messages, time, traffic volume etc. and would have required an extended message interface between the \stack{} and \store{} and potentially a replication of the sockets in both components updating each other via this interface. In general, this information cannot be derived from static, purely syntactic information from high-level language input code.
+In sketching the target program, the first change made to the original code was to encapsulate as much of the logic as possible into either the states or the initialization functions. As a first guess, the socket handling i.e. checking if sockets are open, setting them to listening state etc. was encapsulated in the \store{.handle_sockets} call. The problem with this decision is that the actual \rust{SocketSet} type contains lifetime bound references, meaning they do not implement \rust{Clone} and we cannot just replace passing them by reference with actually moving them. \\
+
+Implementing a custom, owned version of the \rust{SocketSet} would be a remedy for this problem. However, the internal references are actually different buffer types used in the sockets and manipulated in many places in the core logic of smoltcp. This means that implementing a custom, owned \rust{SocketSet} type would not only result in extensive changes, but would also negatively affect the efficiency of the program. The other option is to not send the sockets, but only the required information among components. What this required information is, depends on how each of the components involved interacts with the sockets. For our example key-value store application, the interaction between sockets and \store{} is fairly simple. The \store{} receives a message from a socket and answers it. As we will later see, the interaction between the \stack{} and the sockets is rather involved. So instead of having a free-floating \rust{SocketSet} in the main scope, we make it part of the \stack{} upon initialization. This also means, we need to move the code for handling the sockets into the \stack{} as well and return to the \store{} not directly after polling, but when a socket is processed. We will discuss how this is done in Section~\ref{subsec:refactorReceiving}. The main point here is to illustrate the problem of designing the interfaces between components, if they are not clearly defined in the first place. \\
+
+A less simple case could have involved, for instance, conditional opening or closing of sockets by the \store{} based on concrete messages, time, traffic volume etc. and would have required an extended message interface between the \stack{} and \store{} and potentially a replication of the sockets in both components updating each other via this interface. In general, this information cannot be derived from static, purely syntactic information from high-level language input code.
 
 \subsection{Refactoring Packet Sending}
 The next step is to refactor the \rust{poll} method. We need to bring the stateful usage of the \dev{} into the compile scope and create a single \emph{entry method} the three 
@@ -163,7 +167,7 @@ components use to call each other. This \emph{entry method} will internally disp
 
 The code of \rust{poll} is depicted in Listing~\ref{fig:pollCode}. The method itself contains a loop calling \rust{socket_egress} which executes sending packets to the \rust{device} and \rust{socket_ingress} which receives packets and distributes them to the \rust{sockets}. As long as there are packets send or received in each loop, \rust{poll} continues. \\
 
-\begin{codefigure}[H]
+\begin{codefigure}[ht]
     \centering
     
 \begin{minted}[fontsize=\footnotesize]{rust}
@@ -200,7 +204,7 @@ As we can see the \dev{} reference is passed further down into two method calls,
 \label{subsec:DeviceLifting}
 Listing~\ref{fig:egressCode} shows how sending packets proceeds as a loop over the socket items. If a \rust{socket} can send, its \rust{socket.dispatch} method is called passing a reference to the \stack{} and the \rust{respond} closure. As our example works with TCP sockets, inside \rust{dispatch} the \rust{socket} prepares a TCP packet and passes it to the \rust{respond} closure. This closure will then try to get a sending token from the \dev{} and pass the token and the TCP packet. The token is basically a direct reference to the sending buffer of the \dev{}. Finally inside the \rust{inner.dispatch} call of the \rust{stack} will wrap the TCP packet into a network representation e.g. an Ethernet frame and directly write that packet into the device buffer using the token.\\
  
-\begin{codefigure}[H]
+\begin{codefigure}[ht]
     \centering
     
 \begin{minted}[fontsize=\footnotesize]{rust}
@@ -243,7 +247,7 @@ fn socket_egress<D>(&mut self, device: &mut D, sockets: &mut SocketSet<'_>)
 
  The \dev{} is used twice in this method. Once for receiving a token in the \dev{.transmit()} call, a second time implicitly when this token is used to pass a packet to the device inside the \rust{inner.dispatch_ip} call. The both of this calls occur inside the \rust{socket.dispatch} method, when the \rust{respond} closure is called. To resolve the nested structure we start with inlining the code of the \rust{respond} closure to \rust{socket.dispatch} and get the structure shown in Listing~\ref{fig:dispatch}. 
  
- \begin{codefigure}[H]
+ \begin{codefigure}[ht]
 \centering    
 \begin{minted}[fontsize=\footnotesize]{rust}
 // tcp_socket.rs
@@ -746,21 +750,21 @@ Destructuring of function output was limited to to flat tuples of two elements. 
 \tabskip=0pt
 \valign{#\cr
     \hbox{%
-    \begin{subcodefigure}{.35\textwidth}
+    \begin{subcodefigure}{.4\textwidth}
     \centering
      \begin{minted}[fontsize=\footnotesize]{rust}
-    let (x, y, z):(T1, T2, T3) = actual_function();
+let (x, y, z):(A, B, C) = actual_fun();
      \end{minted}
     \end{subcodefigure}%
   }
   \cr
   \noalign{\hfill}
     \hbox{%
-    \begin{subcodefigure}{.62\textwidth}
+    \begin{subcodefigure}{.57\textwidth}
     \centering
     \begin{minted}[fontsize=\footnotesize]{rust}
-    let (x, yz):(T1, (T2, T3)) = actual_function();
-    let (y, z): (T2, T3) = invented_destruct(yz);
+    let (x, yz):(A, (B, C)) = actual_fun();
+    let (y, z): (B, C) = invented_destruct(yz);
     \end{minted}
     \end{subcodefigure}%
   }

@@ -442,20 +442,7 @@
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% Style fuer Bibliography
-\if@bibnum
-  \if@german
-    \bibliographystyle{plaindin}
-  \else
-    \bibliographystyle{plain}
-  \fi
-\else
-  \if@german
-    \bibliographystyle{alphadin}
-  \else
-    \bibliographystyle{alpha}
-  \fi
-\fi
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % List of tables/figures hinzu falls gewuenscht
 \if@lof
@@ -517,7 +504,8 @@
 	\vspace{1cm}
 	{\Large\noindent \titleheader \par}
 	\vspace{0.5cm}
-	{\LARGE\noindent \textbf{Bricks of a Network Stack} \par}
+	{\LARGE\noindent \textbf{Compiling Unikernels into Micro Kernels
+} \par}
 	\vspace{0.5cm}
 
 	{\LARGE\noindent Lisza Zeidler \par} 
@@ -582,23 +570,25 @@
 	\cleardoublestandardpage
 	%Zusammenfassung
 	\if@german
-	  {\vspace*{2cm}
-	  \minisec{Kurzfassung}
+	  {
+	  \minisec{}
 	  \@abstractde
-	  \vspace{2cm}
+	  %\vspace{2cm}
  	  \selectlanguage{american}
 	  \minisec{Abstract}
+        \vspace{1cm}
 	  \@abstracten
 	  \selectlanguage{ngerman}
 	  }
     \else
-	  {\vspace*{2cm}
+	  {
   	  \selectlanguage{ngerman}
-	  \minisec{Kurzfassung}
+	  \minisec{}
 	  \@abstractde
 	  \selectlanguage{american}
 	  \vspace{2cm}
 	  \minisec{Abstract}
+        \vspace{1cm}
 	  \@abstracten
 	  }
     \fi
@@ -668,12 +658,6 @@
 	% Literatur-, Abbildungs- und Tabellenverzeichnis, wenn nicht schon bei
 	% \appendix automatisch davor eingefuegt
 	\ifx\@empty\@haveapp
-	  \cleardoublestandardpage
-	  \ifx\@empty\@bibfiles
-	  \else
-	    \bibliography{\@bibfiles}
-	  \fi
-	  
 	\fi
 	\cleardoublestandardpage
 	%Danksagung

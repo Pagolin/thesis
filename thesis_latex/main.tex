@@ -1,0 +1,101 @@
+\documentclass[diplominf]{zihpub}
+
+\usepackage{color}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{minted}
+\usepackage{multirow}
+\usepackage{pdfpages}
+\usepackage{pbox}
+\usepackage{subcaption}
+\usepackage{todonotes}
+
+
+% Listings mit subfigures
+\usepackage{newfloat}
+\usepackage{subcaption}
+\DeclareFloatingEnvironment[name={Listing}]{codefigure}
+
+% Just for convenience
+
+\newcommand{\question}[1]{\todo[inline, color=blue!40]{#1}}
+\newcommand{\note}[1]{\todo[inline, color=yellow!40]{#1}}
+\definecolor{rubinered}{HTML}{ED017D}
+\newcommand{\seflue}[1]{\todo[inline, color=rubinered!40]{#1}}
+
+\setminted{fontsize=\footnotesize}
+\setmintedinline{fontsize=\small}
+\newcommand{\means}{$\rightarrow{}$}
+\newcommand{\code}[1]{\textcolor{gray}{$\mathsf{#1}$}}
+\newcommand{\rust}[1]{\mintinline{rust}{#1}}
+\newcommand{\dev}[1]{\rust{device#1}}
+\newcommand{\stack}[1]{\rust{ip_stack#1}}
+\newcommand{\store}[1]{\rust{store#1}}
+\newcommand{\md}[0]{M$^3\ $}
+
+
+\author{Lisza Zeidler}
+\title{Compiling Unikernels into Micro Kernels}
+\matno{4545705}
+\betreuer{}
+
+%\bibfiles{literature.bib}
+
+\abstracten{
+With increasing complexity, programs become more prone to bugs and security vulnerabilities. This is particularly true of kernels. For example, the original feature set of the monolithic Unix kernel is still continuously extended by functions, drivers and modules. Since these are not mutually constrained, each additional component increases the attack surface of the entire system. There are several approaches to solving this problem and implementing the concept of defense in depth. However, they all involve runtime costs and, most importantly, manual customization. This effort makes it difficult or impossible to flexibly adapt existing software to isolation mechanisms that provide an appropriate trade-off between security and performance overhead.\\ 
+
+The idea of this work is to investigate whether the isolation of components of a server application can also be done by a compiler. The Ohua compiler has been developed to identify independent execution steps in a sequential program and to transform the program into a dataflow program consisting of independent nodes with potentially separate memory. The specific implementation of the nodes is determined by architectural integrations. Nodes can be threads or processes, or theoretically other isolation concepts.  We wanted to use Ohua to convert a server application, in which the application, IP stack and network interface share the same memory, into an application for the microkernel-based operating system \md. The main questions were i) how to restructure the server application so that in the resulting dataflow graph the application, IP stack and network interface each operate in exactly one isolated node, and ii) could these restructurings be implemented as compiler transformations. \\
+
+We show how the application can be restructured accordingly. Formal descriptions already exist for some of the transformations. However, it has also become clear that the syntax of the input program alone does not contain enough information to define, for example, whether or not the program should be adapted to concrete target systems such as \md. Therefore, this thesis discusses which transformations could be implemented as compiler transformations in the future, and which transformations still have to be done by the programmer. }
+
+
+\acknowledgments{
+Of course, I would like to thank the people who helped me with this thesis. To my supervisor Sebastian Ertel for his time, help and brainstorming together, as well as Felix Suchert for helping me master Rust problems and Nils Asmussen for helping me understand \md. \\ 
+
+But I wouldn't have written this thesis, and probably not a single line of code, without Vera Zeidler and Sebastian Fl\"ugge. Without Sebastian I would not have had the idea to study computer science, and that would have been a pity, because the idea was really good. Without Vera I literally wouldn't be here. Thank you for all your efforts, love and cleverness, I hope you are also a little proud.}
+
+\begin{document}
+\begin{thesisdocument}
+
+\chapter{Introduction}
+\label{Chapter:Intro}
+\input{chapters/introduction}
+
+\chapter{Background}
+\label{Chapter:Background}
+\input{chapters/background}
+
+\chapter{Implementation}
+\label{Chapter:Implementation}
+\input{chapters/implementation}
+
+\chapter{Related Work}
+\label{Chapter:Related}
+\input{chapters/relatedwork}
+
+\chapter{Evaluation and Lessons learned}
+\label{Chapter:Learnings}
+\input{chapters/LearningsAndEvalutation}
+
+\chapter{Conclusion}
+\label{Chapter:Discussion}
+\input{chapters/conclusion}
+
+\cleardoublestandardpage
+\bibliographystyle{plain}
+\bibliography{literature.bib}
+\cleardoublestandardpage
+\listoffigures
+\cleardoublestandardpage
+\listof{codefigure}{List of Listings}      
+\cleardoublestandardpage
+\listoftables
+
+
+\appendix
+\chapter{Appendix}
+\label{Appendix}
+\input{chapters/appendix}
+
+\end{thesisdocument}
+\end{document}

@@ -246,7 +246,7 @@ When activities are idle, they notify the kernel, which can then schedule anothe
 To pass capabilities and file descriptors to a child activity, the attribute \rust{activity.data_sink()} can be used to serialize data into the process memory. This data can be accessed from inside the activity code using \rust{data_source()}. Serialization is implemented in a custom \rust{Serializer} based on the \rust{serde} crate. We need this mechanism, as shown in the example, to pass send and receive gates to the activities. For simple environmental variables, the API provides a separate mechanism using \rust{m3::env}. This basically provides a global key-value store in which variables can be stored before the definition of an activity, retrieved by key inside the activity, and deleted after the activity definition to not pollute the namespace.\\
 
 
-\begin{codefigure}
+\begin{codefigure}[ht]
     \centering
     \begin{minted}[fontsize=\footnotesize]{rust}
 fn run_send_receive(t: &mut dyn WvTester) {
@@ -295,7 +295,7 @@ Apart from the credit system, sending messages is straight forward, as known fro
 Ohua already features an architecture integration for Rust on \md. It is built on a simplified API of \md that provides two main encapsulations, the \rust{channel()} call and the \rust{activity!} macro. Listing~\ref{fig:OhuaM3Wrapper} shows how an activity can be created using those functionalities. The function \rust{channel} basically wraps the initialization of pairs of send and receive gates with default message orderings, a default message size, and a default of one send credit. This allows to create channels basically the same way as in pure Rust or Python. The \rust{activity!} generates code to 1) instantiate a \rust{ChildActivity} on the current tile, 2) delegate the given gates to the activity, and 3) bind and activate the gates inside the activity. This again basically resembles the initialization of a thread in pure Rust. 
 
 
-\begin{codefigure}
+\begin{codefigure}[ht]
     \centering
     \begin{minted}[fontsize=\footnotesize]{rust}
     use funs::hello_world;
@@ -340,7 +340,7 @@ The actual transfer of packets from the interface to the device is realized via 
 
 Obviously, one implication of separating the layers of smoltcp to different, memory separated components is that this kind of memory efficiency cannot be maintained. 
 
-\begin{codefigure}[H]
+\begin{codefigure}[ht]
 \centering
 \tabskip=0pt
 \valign{#\cr
